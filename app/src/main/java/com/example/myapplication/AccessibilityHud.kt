@@ -160,6 +160,13 @@ class AccessibilityHud(private val service: AccessibilityService) {
     }
 
     private fun dispatchDrag() {
+        // The continued-stroke API was introduced in Android 8.0.
+        // Guard the API call itself, not just the entry point, so service
+        // callbacks on older versions cannot accidentally invoke it.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) {
+            failDrag()
+            return
+        }
         if (!dragActive || dragDispatching) return
         val prev=dragStroke
         val ending=dragEnding
