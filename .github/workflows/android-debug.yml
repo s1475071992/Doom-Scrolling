@@ -52,7 +52,7 @@ jobs:
       - name: Test, Android Lint and build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
       - name: Assert both NPU vendors and landmark models are packaged
         shell: bash
         run: |
@@ -64,6 +64,18 @@ jobs:
           grep -F 'lib/arm64-v8a/libLiteRtDispatch_Qualcomm.so' /tmp/experimental_apk_contents.txt
           grep -F 'assets/palm_detection.tflite' /tmp/experimental_apk_contents.txt
           grep -F 'assets/hand_landmark.tflite' /tmp/experimental_apk_contents.txt
+      - name: Validate release APK and signing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          unzip -Z1 "$APK" | grep -F 'assets/gesture_recognizer.task'
+          unzip -Z1 "$APK" | grep -F 'assets/palm_detection.tflite'
+          unzip -Z1 "$APK" | grep -F 'assets/hand_landmark.tflite'
+          unzip -Z1 "$APK" | grep -F 'lib/arm64-v8a/libLiteRtDispatch_Qualcomm.so'
+          unzip -Z1 "$APK" | grep -F 'lib/arm64-v8a/libLiteRtDispatch_MediaTek.so'
       - name: Print Lint failures for experimental compatibility audit
         if: failure()
         shell: bash
