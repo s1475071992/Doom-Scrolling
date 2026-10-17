@@ -54,6 +54,7 @@ class HandDetectionAnalyzer(
     private var npuPipeline: NpuHandPipeline? = null
     @Volatile private var activeBackend: InferenceBackend? = null
     @Volatile private var gpuRuntimeFailed = false
+    @Volatile private var gpuFailureReason = "MediaPipe GPU 运行错误"
 
     fun isReady(): Boolean = recognizer != null || npuPipeline != null
 
@@ -145,7 +146,10 @@ class HandDetectionAnalyzer(
             }
             .setErrorListener { error ->
                 Log.e("HandDetection", "MediaPipe inference error", error)
-                if (activeBackend == InferenceBackend.GPU) gpuRuntimeFailed = true
+                if (activeBackend == InferenceBackend.GPU) {
+                    gpuFailureReason = "MediaPipe GPU 异步回调错误：${error.javaClass.simpleName}"
+                    gpuRuntimeFailed = true
+                }
                 onHandsDetected(null)
                 busy.set(false)
             }
@@ -157,6 +161,7 @@ class HandDetectionAnalyzer(
         // Called from the same cameraExecutor thread used to construct GPU.
         if (!gpuRuntimeFailed || activeBackend != InferenceBackend.GPU) return
         gpuRuntimeFailed = false
+        val reason = gpuFailureReason
         val old = recognizer
         recognizer = null
         try {
@@ -169,11 +174,33 @@ class HandDetectionAnalyzer(
             activeBackend = InferenceBackend.CPU
             GestureDiagnostics.backend("CPU · GPU 出错后自动回退")
             GestureDiagnostics.assignmentEvidence("CPU Delegate")
-            GestureDiagnostics.fallbackReason("MediaPipe GPU 回调报告错误")
+            GestureDiagnostics.fallbackReason(reason)
         } catch (e: Exception) {
             Log.e("HandDetection", "CPU fallback also failed", e)
             activeBackend = null
             GestureDiagnostics.backend("GPU/CPU 初始化均失败")
+        }
+    }
+
+    /**
+     * Called directly from the cameraExecutor when recognizeAsync() throws.
+     * GPU cleanup and CPU creation must stay on the same thread that created
+     * the GPU EGL context. Never rebuild a delegate inside MediaPipe callbacks.
+     */
+    private fun recoverFromSynchronousMediaPipeError(error: Throwable, image: MPImage) {
+        try {
+            image.close()
+        } catch (closeError: Exception) {
+            Log.w("HandDetection", "Failed to close rejected input image", closeError)
+        }
+        if (activeBackend == InferenceBackend.GPU) {
+            gpuFailureReason = "MediaPipe GPU 同步推理异常：${error.javaClass.simpleName}"
+            gpuRuntimeFailed = true
+            fallbackToCpuAfterGpuFailure()
+        } else {
+            GestureDiagnostics.fallbackReason(
+                "MediaPipe CPU 同步推理异常：${error.javaClass.simpleName}"
+            )
         }
     }
 
@@ -271,12 +298,18 @@ class HandDetectionAnalyzer(
                 try {
                     recognizer!!.recognizeAsync(image, timestamp)
                 } catch (e: Exception) {
-                    image.close()
+                    recoverFromSynchronousMediaPipeError(e, image)
+                    throw e
+                } catch (e: LinkageError) {
+                    recoverFromSynchronousMediaPipeError(e, image)
                     throw e
                 }
             }
         } catch (e: Exception) {
             Log.e("HandDetection", "Frame analysis failed", e)
+            busy.set(false)
+        } catch (e: LinkageError) {
+            Log.e("HandDetection", "Native inference failed", e)
             busy.set(false)
         } finally {
             imageProxy.close()

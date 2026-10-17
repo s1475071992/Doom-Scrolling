@@ -243,4 +243,26 @@ class DynamicFingerDetectorTest {
         }
         assertTrue("four extended fingers must not arm V-pose", hints.isEmpty())
     }
+    @Test fun npuJitterBetweenDirectionSamplesStillTriggersFourDirections() {
+        val directions = listOf(
+            Triple(-.16f, 0f, "Two_Move_Right"),
+            Triple(.16f, 0f, "Two_Move_Left"),
+            Triple(0f, -.16f, "Two_Move_Up"),
+            Triple(0f, .16f, "Two_Move_Down")
+        )
+        for ((dx,dy,event) in directions) {
+            val d = detector()
+            arm(d, pose(indexExtended = true, middleExtended = true))
+            val moved = pose(indexExtended = true, middleExtended = true,
+                deltaX = dx, deltaY = dy)
+            // Jitter can briefly drop net motion below the threshold,
+            // but never produces another stable direction candidate.
+            assertNull(d.process(moved, 640L))
+            assertNull(d.process(pose(indexExtended = true, middleExtended = true,
+                deltaX = dx * .5f, deltaY = dy * .5f), 720L))
+            assertNull(d.process(moved, 810L))
+            assertEquals(event, d.process(moved, 900L))
+        }
+    }
+
 }

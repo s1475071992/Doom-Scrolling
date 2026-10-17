@@ -22,7 +22,6 @@ class NpuHandPipeline private constructor(
     private val hand: NpuSubmodelProbe
 ) : AutoCloseable {
     data class Point(val x: Float, val y: Float, val z: Float)
-    private data class Roi(val x: Float, val y: Float, val side: Float, val theta: Float)
     private data class Anchor(val x: Float, val y: Float)
     private val anchors: List<Anchor> = buildList {
         for ((stride, count) in listOf(8 to 2, 16 to 6)) {
@@ -41,7 +40,7 @@ class NpuHandPipeline private constructor(
     private val palmInput = FloatArray(192 * 192 * 3)
     private val handInput = FloatArray(224 * 224 * 3)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-    private var trackedRoi: Roi? = null
+    private var trackedRoi: NpuRoi? = null
     private var missing = 0
 
     fun inferenceMetrics(): String =
@@ -72,22 +71,23 @@ class NpuHandPipeline private constructor(
             missing++
             return null
         }
-        val p = output
-        val wrist = p[0]
-        val middle = p[9]
-        val angle = (PI.toFloat() / 2f) - atan2(wrist.y - middle.y, middle.x - wrist.x)
-        val xMin = p.minOf { it.x }; val xMax = p.maxOf { it.x }
-        val yMin = p.minOf { it.y }; val yMax = p.maxOf { it.y }
-        val side = (max((xMax - xMin) * frame.width, (yMax - yMin) * frame.height)
-            * 2.1f).coerceAtLeast(60f)
-        val cx = (xMax + xMin) * frame.width * .5f
-        val cy = (yMax + yMin) * frame.height * .5f
-        trackedRoi = Roi(cx, cy, side, angle)
+        // Track in the original frame, not crop-local coordinates.
+        // Previous 2.1x axis-aligned bounds created large, drifting crops,
+        // making fingers too small for reliable V-pose/movement tracking.
+        if (output.any { !it.x.isFinite() || !it.y.isFinite() ||
+                it.x !in -0.35f..1.35f || it.y !in -0.35f..1.35f }) {
+            trackedRoi = null
+            return null
+        }
+        val target = NpuRoiGeometry.fromLandmarks(
+            output.map { NpuPoint2(it.x, it.y) }, frame.width, frame.height
+        )
+        trackedRoi = NpuRoiGeometry.smooth(roi, target)
         missing = 0
-        return p
+        return output
     }
 
-    private fun locatePalm(frame: Bitmap): Roi? {
+    private fun locatePalm(frame: Bitmap): NpuRoi? {
         val scale = min(192f / frame.width, 192f / frame.height)
         val ww = frame.width * scale
         val hh = frame.height * scale
@@ -120,17 +120,16 @@ class NpuHandPipeline private constructor(
         val wristY = imageY(5)
         val middleX = imageX(8)
         val middleY = imageY(9)
-        val theta = PI.toFloat() / 2f - atan2(wristY - middleY, middleX - wristX)
-        val side = (max(width, height) * 2.6f).coerceAtLeast(64f)
-        // DetectionToRect/RectTransformation center is shifted towards fingers.
-        val roiX = (wristX + middleX) * .5f
-        val roiY = (wristY + middleY) * .5f
-        val cx = if (roiX.isFinite()) roiX else centerX
-        val cy = if (roiY.isFinite()) roiY else centerY
-        return Roi(cx, cy, side, theta)
+        // MediaPipe hand crop is shifted toward the fingers, not centred
+        // halfway from wrist to middle MCP (which clipped two extended tips).
+        val roi = NpuRoiGeometry.fromPalm(
+            wristX, wristY, middleX, middleY, width, height
+        )
+        return if (roi.x.isFinite() && roi.y.isFinite() && roi.side.isFinite()) roi
+            else NpuRoiGeometry.fallback(centerX, centerY, max(width, height))
     }
 
-    private fun runHand(frame: Bitmap, roi: Roi): List<Point>? {
+    private fun runHand(frame: Bitmap, roi: NpuRoi): List<Point>? {
         val canvas = handCanvas
         canvas.drawColor(Color.BLACK)
         canvas.save()

@@ -49,6 +49,7 @@ class DynamicFingerDetector(
     private var motionPath = 0f
     private var lostTwoFrames = 0
     private var confirmingMisses = 0
+    private var candidateMisses = 0
 
     private val settleMs = 440L
     private val stableFrameCount = 5
@@ -158,6 +159,7 @@ class DynamicFingerDetector(
         motionPath=0f
         lostTwoFrames=0
         confirmingMisses=0
+        candidateMisses=0
     }
 
     fun clear() {
@@ -167,16 +169,23 @@ class DynamicFingerDetector(
 
     private fun candidate(event:String?,now:Long):String? {
         if(event==null) {
+            // A tiny NPU landmark wobble may momentarily drop below the
+            // displacement/straightness threshold. Keep the same direction
+            // for up to two bad samples; never count them as valid frames.
+            if(candidateKey!=null && ++candidateMisses<=2) return null
             candidateKey=null
             candidateFrames=0
+            candidateMisses=0
             return null
         }
         if(candidateKey!=event) {
             candidateKey=event
             candidateAt=now
             candidateFrames=1
+            candidateMisses=0
             return null
         }
+        candidateMisses=0
         candidateFrames++
         if(candidateFrames<3 || now-candidateAt<120L) return null
         phase=Phase.FIRED
@@ -307,7 +316,10 @@ class DynamicFingerDetector(
                     // 低通跟踪掌心：不用食指/中指的指尖位置判断移动。
                     val nx=smoothedX+(current.x-smoothedX)*.78f
                     val ny=smoothedY+(current.y-smoothedY)*.78f
-                    motionPath+=hypot(nx-smoothedX,ny-smoothedY)
+                    val step=hypot(nx-smoothedX,ny-smoothedY)
+                    // Ignore sub-palm-width landmark noise in the traveled
+                    // path; otherwise jitter alone drives straightness down.
+                    motionPath+=(step-current.palmWidth*.045f).coerceAtLeast(0f)
                     smoothedX=nx;smoothedY=ny
                     val dx=(origin.x-smoothedX)/origin.palmWidth
                     val dy=(smoothedY-origin.y)/origin.palmWidth
