@@ -189,6 +189,7 @@ class DynamicFingerDetector(
     /** 时间可注入，便于自动测试逐帧轨迹。 */
     fun process(points:List<P>?,now:Long=SystemClock.uptimeMillis()):String? {
         if(points==null || points.size!=21) {
+            trace("无有效 21 点关键点 · 阶段:${phase.name}")
             if(now-lastSeenAt>330L) clear()
             return null
         }
