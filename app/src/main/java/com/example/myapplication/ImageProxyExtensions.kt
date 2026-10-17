@@ -10,7 +10,6 @@ import androidx.camera.core.ImageProxy
 import java.io.ByteArrayOutputStream
 
 fun ImageProxy.toBitmap(): Bitmap {
-    val image = image ?: throw IllegalStateException("ImageProxy has no image")
     if (format != ImageFormat.YUV_420_888) {
         throw IllegalStateException("Unsupported ImageProxy format: $format")
     }

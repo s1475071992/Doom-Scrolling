@@ -40,11 +40,11 @@ class HandDetectionAnalyzer(
     private val busy = AtomicBoolean(false)
     private var lastTimeMs = 0L
     private var lastFrameAtMs = 0L
+    @Volatile private var lastHandAtMs = SystemClock.uptimeMillis()
     private var fpsWindowStart = 0L
     private var frameCount = 0
     private var measuredFps = 0f
     private var lastDiagnosticsAt = 0L
-    private val custom = OptionalCustomGestureModel(context)
     private var recognizer: GestureRecognizer? = null
 
     init {
@@ -81,9 +81,13 @@ class HandDetectionAnalyzer(
     }
 
     override fun analyze(imageProxy: ImageProxy) {
-        // Air mouse targets ~30 FPS, static poses ~18 FPS.
+        // Adaptive inference rate; the user-enabled camera stays on, with
+        // hand detection at low standby frequency to allow rapid wake-up.
         val now = SystemClock.uptimeMillis()
-        val minInterval = if (GestureRuntime.airMouse) 32L else 55L
+        val minInterval = RecognitionCadence.intervalMs(
+            GestureRuntime.airMouse, GestureRuntime.powerSaving,
+            now - lastHandAtMs
+        )
         if (now - lastFrameAtMs < minInterval || recognizer == null ||
             !busy.compareAndSet(false, true)) {
             imageProxy.close()
@@ -112,26 +116,17 @@ class HandDetectionAnalyzer(
             onHandsDetected(null)
             return
         }
-        val p = hand.map { GestureGeometry.Point(it.x(), it.y(), it.z()) }
+        // The six released gestures and air-mouse use landmarks exclusively.
+        // Do not allocate legacy geometry descriptors or run an optional TFLite
+        // classifier on every frame: neither influences any mapped action.
+        lastHandAtMs = SystemClock.uptimeMillis()
+        val p = hand.map { NormalizedPoint(it.x(), it.y(), it.z()) }
         val top = result.gestures().firstOrNull()?.firstOrNull()
-        val modelName = top?.categoryName() ?: "None"
-        val modelConfidence = top?.score() ?: 0f
-
-        // Use MediaPipe's original seven categories first. Only fall back
-        // to user model and geometric shapes when no strong native match.
-        // Custom-trained gestures take priority when extremely confident.
-        // Native recognition covers seven canonical labels; rule-based geometry
-        // handles only three extra shapes and NEVER duplicates the native poses.
-        val customResult = custom.predict(p)
-        val nativeName = GestureCatalog.canonical(modelName)
-        val nativeMatch = modelConfidence >= .62f && nativeName in GestureCatalog.known
-        val geometry = if (customResult == null && !nativeMatch)
-            GestureGeometry.recognize(p) else null
-        val final = customResult ?: if (nativeMatch) nativeName to modelConfidence
-                    else geometry ?: ("None" to 0f)
-        val name = GestureCatalog.canonical(final.first)
-        val confidence = final.second
-        recordFrame(SystemClock.uptimeMillis(), name, confidence)
+        val topName = GestureCatalog.canonical(top?.categoryName() ?: "None")
+        val score = top?.score() ?: 0f
+        val name = if (score >= .62f && topName in GestureCatalog.labels)
+            topName else "检测到手部"
+        recordFrame(SystemClock.uptimeMillis(), name, score)
 
         val dx = p[4].x - p[8].x
         val dy = p[4].y - p[8].y
@@ -146,16 +141,16 @@ class HandDetectionAnalyzer(
 
         onHandsDetected(HandGesture(
             isFiveFingersOpen = name == "Open_Palm",
-            isFiveFingersClosed = name == "Fist" || name == "Closed_Fist",
+            isFiveFingersClosed = name == "Closed_Fist",
             isFourFingersOpen = false,
-            isPinching = name == "OK" || dist2 < .0025f,
+            isPinching = pinchRatio < .47f || name == "OK",
             pinchDistanceSquared = dist2,
             pinchRatio = pinchRatio,
             indexFingerAngleDeg = angle,
             indexFingerPosition = IndexFingerPosition(p[8].x, p[8].y),
-            landmarks = p.map { NormalizedPoint(it.x, it.y, it.z) },
+            landmarks = p,
             gestureName = name,
-            confidence = confidence
+            confidence = score
         ))
     }
 
@@ -167,7 +162,7 @@ class HandDetectionAnalyzer(
             frameCount = 0
             fpsWindowStart = now
         }
-        if (now - lastDiagnosticsAt >= 220L) {
+        if (now - lastDiagnosticsAt >= 350L) {
             lastDiagnosticsAt = now
             GestureDiagnostics.recognition(measuredFps, name, confidence)
         }
@@ -176,6 +171,5 @@ class HandDetectionAnalyzer(
     fun release() {
         recognizer?.close()
         recognizer = null
-        custom.close()
     }
 }

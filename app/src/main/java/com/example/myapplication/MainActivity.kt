@@ -15,10 +15,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,19 +25,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.example.myapplication.ui.theme.MyApplicationTheme
-import com.google.common.util.concurrent.ListenableFuture
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var cameraExecutor: ExecutorService
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var handDetectionAnalyzer: HandDetectionAnalyzer? = null
     private val gestureScrollController = GestureScrollController()
     
     private val PREFS_NAME = "ScrollablePrefs"
@@ -60,7 +49,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted && !_isScrollingEnabledPersisted.value) {
-            startCamera()
+            // Camera starts only when user enables the foreground service.
         } else {
             // Permission denied
         }
@@ -104,7 +93,6 @@ class MainActivity : ComponentActivity() {
         }
 
         lifecycle.addObserver(lifecycleObserver)
-        cameraExecutor = Executors.newSingleThreadExecutor()
 
         setContent {
             MyApplicationTheme {
@@ -142,29 +130,12 @@ class MainActivity : ComponentActivity() {
                 this,
                 Manifest.permission.CAMERA
             ) == PackageManager.PERMISSION_GRANTED -> {
-                startCamera()
+                // Permission granted: remain idle without opening the camera.
             }
             else -> {
                 requestPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
         }
-    }
-
-    private fun startCamera() {
-        if (_isScrollingEnabledPersisted.value || !isInForeground) return
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-
-        cameraProviderFuture.addListener({
-            try {
-                cameraProvider = cameraProviderFuture.get()
-                // Do not contend with the foreground camera service.
-                if (!_isScrollingEnabledPersisted.value && isInForeground) {
-                    bindCameraUseCases()
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }, ContextCompat.getMainExecutor(this))
     }
 
     override fun onStart() {
@@ -187,17 +158,12 @@ class MainActivity : ComponentActivity() {
         isInForeground = false
         // No background start here: camera FGS must be created while visible.
         // The already-running service keeps the camera across apps.
-        if (!_isScrollingEnabledPersisted.value) {
-            cameraProvider?.unbindAll()
-        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         // Unregister status callback
         GestureDetectionService.setStatusCallback(null)
-        cameraExecutor.shutdown()
-        handDetectionAnalyzer?.release()
     }
 
     override fun onResume() {
@@ -207,38 +173,8 @@ class MainActivity : ComponentActivity() {
             _scrollStatus.value = "识别服务已停止，请重新开启"
         }
 
-        // The Activity must never reopen the camera while our FGS owns it.
-        if (!_isScrollingEnabledPersisted.value &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            bindCameraUseCases()
-        }
-    }
-
-    private var previewView: PreviewView? = null
-
-    fun setupPreview(view: PreviewView) {
-        previewView = view
-        bindCameraUseCases()
-    }
-
-    private fun bindCameraUseCases() {
-        // Preview-only when disabled; all active gesture detection belongs to FGS.
-        if (_isScrollingEnabledPersisted.value || !isInForeground) return
-        val provider = cameraProvider
-        if (provider == null) {
-            startCamera()
-            return
-        }
-        val view = previewView ?: return
-        try {
-            provider.unbindAll()
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(view.surfaceProvider)
-            }
-            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
-        } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "Failed to start idle camera preview", e)
-        }
+        // Do not start a second preview while disabled. The camera should
+        // remain fully closed until gesture control is explicitly enabled.
     }
 
     private fun enableScrolling() {
@@ -254,9 +190,6 @@ class MainActivity : ComponentActivity() {
         }
         try {
             // Release Activity camera BEFORE creating the FGS camera owner.
-            cameraProvider?.unbindAll()
-            handDetectionAnalyzer?.release()
-            handDetectionAnalyzer = null
             gestureScrollController.reset()
             ScrollAccessibilityService.setEnabled(true)
             _isScrollingEnabledPersisted.value = true
@@ -272,7 +205,6 @@ class MainActivity : ComponentActivity() {
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_ENABLED, false).apply()
             _scrollStatus.value = "摄像头服务启动失败：${e.message}"
-            bindCameraUseCases()
         }
     }
 
@@ -284,10 +216,7 @@ class MainActivity : ComponentActivity() {
         GestureDetectionService.stop(this)
         gestureScrollController.reset()
         _scrollStatus.value = "手势识别已停止"
-        // Allow the service time to release its CameraX use case.
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (!_isScrollingEnabledPersisted.value && isInForeground) bindCameraUseCases()
-        }, 400L)
+        // Camera stays off in idle mode, reducing both power use and heating.
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -322,7 +251,6 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val activity = context as? MainActivity
     val permissions = remember { mutableStateOf(checkPermissions()) }
     val notificationGranted = remember {
         mutableStateOf(
@@ -340,11 +268,8 @@ fun MainScreen(
         notificationDenied = !granted
         if (granted) onEnableScrolling()
     }
-    val previewView = remember {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FIT_CENTER
-        }
-    }
+    // No idle camera preview: opening CameraX while gesture control is off
+    // wastes energy and could race with the foreground recognition service.
 
     // Listen for lifecycle changes (like returning from settings) to refresh permissions
     DisposableEffect(lifecycleOwner) {
@@ -367,11 +292,7 @@ fun MainScreen(
         permissions.value = checkPermissions()
     }
 
-    LaunchedEffect(permissions.value.hasCamera, isScrollingEnabledState.value) {
-        if (permissions.value.hasCamera && !isScrollingEnabledState.value) {
-            activity?.setupPreview(previewView)
-        }
-    }
+    // Only the user-enabled foreground service opens the camera.
 
     Column(
         modifier = Modifier
@@ -396,8 +317,13 @@ fun MainScreen(
                     modifier = Modifier.padding(16.dp))
             }
         } else {
-            Box(modifier = Modifier.fillMaxWidth().height(400.dp)) {
-                AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("省电待机：摄像头已关闭",
+                        style = MaterialTheme.typography.titleMedium)
+                    Text("开启手势识别后才使用前置摄像头；关闭时不再持续预览。",
+                        style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
 
@@ -440,6 +366,21 @@ fun MainScreen(
                     }) { Text("测试跨应用悬浮提示") }
                 }
             }
+        }
+
+        var powerSavingEnabled by remember { mutableStateOf(GestureRuntime.powerSaving) }
+        Row(modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("智能省电")
+                Text("无手时降低识别频率；普通手势约 15 帧、空鼠约 25 帧。关闭后优先保证响应速度。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = powerSavingEnabled, onCheckedChange = {
+                powerSavingEnabled = it
+                GestureRuntime.setPowerSaving(context, it)
+            })
         }
 
         var feedbackEnabled by remember { mutableStateOf(GestureRuntime.feedback) }

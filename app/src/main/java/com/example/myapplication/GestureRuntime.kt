@@ -15,11 +15,14 @@ object GestureRuntime {
         private set
     @Volatile var feedback: Boolean = true
         private set
+    @Volatile var powerSaving: Boolean = true
+        private set
 
     fun init(context: Context) {
         val pref = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         airMouse = pref.getBoolean("air_mouse", false)
         feedback = pref.getBoolean("feedback", true)
+        powerSaving = pref.getBoolean("power_saving", true)
     }
 
     fun setAirMouse(context: Context, enabled: Boolean) {
@@ -27,6 +30,12 @@ object GestureRuntime {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("air_mouse", enabled).apply()
         if (!enabled) ScrollAccessibilityService.getInstance()?.hideCursor()
+    }
+
+    fun setPowerSaving(context: Context, enabled: Boolean) {
+        powerSaving = enabled
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean("power_saving", enabled).apply()
     }
 
     fun setFeedback(context: Context, enabled: Boolean) {
@@ -47,6 +56,8 @@ object GestureDiagnostics {
         val overlay: String = "尚未建立"
     )
     private val main = Handler(Looper.getMainLooper())
+    @Volatile private var publishedState = ""
+    @Volatile private var publishedAction = ""
     var current by mutableStateOf(Snapshot())
         private set
 
@@ -58,15 +69,21 @@ object GestureDiagnostics {
         }
     }
     fun state(state: String) {
-        main.post { current = current.copy(state = state) }
+        if (state == publishedState) return
+        publishedState = state
+        main.post { if (current.state != state) current = current.copy(state = state) }
     }
     fun action(text: String) {
-        main.post { current = current.copy(lastAction = text) }
+        if (text == publishedAction) return
+        publishedAction = text
+        main.post { if (current.lastAction != text) current = current.copy(lastAction = text) }
     }
     fun overlay(status: String) {
         main.post { current = current.copy(overlay = status) }
     }
     fun reset() {
+        publishedState = ""
+        publishedAction = ""
         main.post { current = Snapshot() }
     }
     fun text(): String = String.format(
