@@ -40,11 +40,11 @@ object GestureRuntime {
 object GestureDiagnostics {
     data class Snapshot(
         val fps: Float = 0f,
-        val name: String = "None",
+        val name: String = "未识别",
         val confidence: Float = 0f,
         val lastAction: String = "—",
-        val state: String = "IDLE",
-        val overlay: String = "NOT_STARTED"
+        val state: String = "等待动作",
+        val overlay: String = "尚未建立"
     )
     private val main = Handler(Looper.getMainLooper())
     var current by mutableStateOf(Snapshot())
@@ -53,7 +53,7 @@ object GestureDiagnostics {
     fun recognition(fps: Float, name: String, confidence: Float) {
         main.post {
             current = current.copy(
-                fps = fps, name = name, confidence = confidence
+                fps = fps, name = GestureCatalog.label(name), confidence = confidence
             )
         }
     }
@@ -70,7 +70,7 @@ object GestureDiagnostics {
         main.post { current = Snapshot() }
     }
     fun text(): String = String.format(
-        Locale.US, "%.1f FPS · %.0f%% · %s · %s",
+        Locale.US, "帧率 %.1f · 置信度 %.0f%% · %s · %s",
         current.fps, current.confidence * 100f, current.name, current.state
     )
 }

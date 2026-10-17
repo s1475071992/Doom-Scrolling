@@ -53,7 +53,7 @@
         <!-- Keeps original ScrollAccessibilityService and its permission configuration. -->
         <activity android:name=".GestureMappingActivity"
             android:exported="false"
-            android:label="Gesture mappings" />
+            android:label="动作映射" />
     </application>
 
 </manifest>

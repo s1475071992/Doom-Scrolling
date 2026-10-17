@@ -1,14 +1,14 @@
 <resources>
-    <string name="app_name">Doom Scrolling</string>
-    <string name="enable_scrolling">Enable Gesture Scrolling</string>
-    <string name="disable_scrolling">Disable Gesture Scrolling</string>
-    <string name="camera_permission_required">Camera permission is required</string>
-    <string name="accessibility_permission_required">Accessibility permission is required for system-wide scrolling</string>
-    <string name="grant_permissions">Grant Permissions</string>
-    <string name="status">Status</string>
-    <string name="ready">Ready</string>
-    <string name="detecting">Detecting hands…</string>
-    <string name="scrolling">Scrolling</string>
-    <string name="instructions">Hold up two fingers in front of the camera to scroll</string>
-    <string name="accessibility_service_description">Enables system-wide scrolling using hand gestures detected by the camera</string>
+    <string name="app_name">隔空手势</string>
+    <string name="enable_scrolling">开启手势识别</string>
+    <string name="disable_scrolling">关闭手势识别</string>
+    <string name="camera_permission_required">需要相机权限</string>
+    <string name="accessibility_permission_required">需要无障碍权限以控制其他应用</string>
+    <string name="grant_permissions">授予权限</string>
+    <string name="status">运行状态</string>
+    <string name="ready">就绪</string>
+    <string name="detecting">正在识别手部</string>
+    <string name="scrolling">正在翻页</string>
+    <string name="instructions">移动食指或双指触发动作，静止手势不会触发</string>
+    <string name="accessibility_service_description">允许摄像头识别手势后在其他应用执行点击、翻页与拖动</string>
 </resources>
