@@ -2,128 +2,257 @@ package com.example.myapplication
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.drawable.GradientDrawable
+import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
-import android.widget.TextView
-import kotlin.math.roundToInt
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.hypot
 
-/** System-wide, non-touchable, non-focusable accessibility overlays.
- * No SYSTEM_ALERT_WINDOW grant is needed for the service's TYPE_ACCESSIBILITY_OVERLAY.
+/**
+ * One transparent fullscreen accessibility overlay: only redraws Canvas.
+ * Does NOT move a WindowManager window on every camera frame.
  */
 class AccessibilityHud(private val service: AccessibilityService) {
-    private val handler = Handler(Looper.getMainLooper())
+    private val main = Handler(Looper.getMainLooper())
     private val wm = service.getSystemService(WindowManager::class.java)
-    private var toast: TextView? = null
-    private var cursor: TextView? = null
-    private var px = .5f
-    private var py = .5f
-    private var smoothReady = false
+    private var overlay: OverlayView? = null
+    private var failed = false
     private var clickBusy = false
-    private val hideToast = Runnable { toast?.let { safeRemove(it) }; toast = null }
 
-    private fun params(width: Int, height: Int, gravity: Int) =
-        WindowManager.LayoutParams(width, height,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            android.graphics.PixelFormat.TRANSLUCENT).apply { this.gravity = gravity }
-
-    private fun safeRemove(view: TextView) {
-        try { wm.removeView(view) } catch (_: Exception) {}
+    private fun ensure(): OverlayView? {
+        overlay?.let { return it }
+        if (failed) return null
+        return try {
+            val v = OverlayView()
+            val layout = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                android.graphics.PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                title = "Air Gestures Feedback"
+            }
+            wm.addView(v, layout)
+            overlay = v
+            GestureDiagnostics.overlay("OVERLAY_READY")
+            v
+        } catch (error: Exception) {
+            failed = true
+            Log.e("AirGestureHud", "Cannot display accessibility overlay", error)
+            GestureDiagnostics.overlay("OVERLAY_ERROR: ${error.javaClass.simpleName}")
+            null
+        }
     }
 
-    fun message(message: String) {
-        handler.post {
+    fun message(value: String) {
+        main.post {
             if (!GestureRuntime.feedback) return@post
-            handler.removeCallbacks(hideToast)
-            val v = toast ?: TextView(service).apply {
-                setTextColor(Color.WHITE)
-                textSize = 14f
-                setPadding(24, 13, 24, 13)
-                background = GradientDrawable().apply {
-                    setColor(Color.argb(210, 24, 26, 33))
-                    cornerRadius = 24f
-                }
-                try {
-                    wm.addView(this, params(
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { y = 110 })
-                    toast = this
-                } catch (_: Exception) { return@post }
-            }
-            v.text = message
-            handler.postDelayed(hideToast, 950L)
+            ensure()?.message(value)
         }
     }
 
-    fun move(rawX: Float, rawY: Float) {
-        handler.post {
-            // Mirror selfie camera horizontally. Orientation / calibration is
-            // device-specific; this is intentionally an experimental mouse.
-            val targetX = (1f - rawX).coerceIn(.03f, .97f)
-            val targetY = rawY.coerceIn(.04f, .96f)
-            if (!smoothReady) {
-                px = targetX; py = targetY; smoothReady = true
-            } else {
-                px += (targetX - px) * .36f
-                py += (targetY - py) * .36f
-            }
-            val v = cursor ?: TextView(service).apply {
-                text = "●"
-                textSize = 30f
-                setTextColor(Color.rgb(0, 215, 244))
-                setShadowLayer(4f, 0f, 0f, Color.BLACK)
-                try {
-                    wm.addView(this, params(64, 64, Gravity.TOP or Gravity.LEFT))
-                    cursor = this
-                } catch (_: Exception) { return@post }
-            }
-            val m = service.resources.displayMetrics
-            val layout = v.layoutParams as WindowManager.LayoutParams
-            layout.x = (px * m.widthPixels).roundToInt() - 32
-            layout.y = (py * m.heightPixels).roundToInt() - 32
-            try { wm.updateViewLayout(v, layout) } catch (_: Exception) {}
-        }
-    }
-
-    fun click() {
-        handler.post {
-            if (!smoothReady || clickBusy) return@post
-            val m = service.resources.displayMetrics
-            val p = Path().apply {
-                moveTo(px * m.widthPixels, py * m.heightPixels)
-            }
-            val desc = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(p, 0L, 55L)).build()
-            clickBusy = true
-            val ok = service.dispatchGesture(desc,
-                object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(g: GestureDescription?) { clickBusy = false }
-                    override fun onCancelled(g: GestureDescription?) { clickBusy = false }
-                }, handler)
-            if (!ok) clickBusy = false
-        }
+    fun move(x: Float, y: Float) {
+        main.post { ensure()?.move(x, y) }
     }
 
     fun hideCursor() {
-        handler.post {
-            cursor?.let { safeRemove(it) }
-            cursor = null
-            smoothReady = false
+        main.post { overlay?.hideCursor() }
+    }
+
+    fun click(onResult: (Boolean) -> Unit) {
+        main.post {
+            val v = overlay
+            if (v == null || !v.isCursorReady() || clickBusy) {
+                Log.w("AirGestureHud", "Click unavailable: cursor missing or busy")
+                GestureDiagnostics.action("AIR_MOUSE_CLICK_SKIPPED")
+                onResult(false)
+                return@post
+            }
+            val (x, y) = v.cursorOnScreen()
+            val path = Path().apply { moveTo(x, y) }
+            val desc = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0L, 75L))
+                .build()
+            clickBusy = true
+            try {
+                val sent = service.dispatchGesture(desc,
+                    object : AccessibilityService.GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription?) {
+                            clickBusy = false
+                            v.flashClick(true)
+                            onResult(true)
+                        }
+                        override fun onCancelled(gestureDescription: GestureDescription?) {
+                            clickBusy = false
+                            v.flashClick(false)
+                            onResult(false)
+                        }
+                    }, main)
+                if (!sent) {
+                    clickBusy = false
+                    v.flashClick(false)
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                Log.e("AirGestureHud", "Could not dispatch cursor click", e)
+                clickBusy = false
+                v.flashClick(false)
+                onResult(false)
+            }
         }
     }
 
     fun clear() {
-        handler.removeCallbacks(hideToast)
-        toast?.let { safeRemove(it) }
-        cursor?.let { safeRemove(it) }
-        toast = null; cursor = null; smoothReady = false
+        main.post {
+            val v = overlay
+            overlay = null
+            if (v != null) {
+                try { wm.removeView(v) } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private inner class OverlayView : View(service) {
+        private val cursorFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(0, 210, 240)
+            style = Paint.Style.FILL
+        }
+        private val cursorRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 3.5f * resources.displayMetrics.density
+        }
+        private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(160, 12, 23, 42)
+            style = Paint.Style.FILL
+        }
+        private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(225, 21, 28, 39)
+        }
+        private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 14f * resources.displayMetrics.scaledDensity
+        }
+        private val density = resources.displayMetrics.density
+        private var rawX = .5f
+        private var rawY = .5f
+        private var sx = .5f
+        private var sy = .5f
+        private var visible = false
+        private var initialized = false
+        private var animating = false
+        private var lastTick = 0L
+        private var toast = ""
+        private var toastUntil = 0L
+        private var flashUntil = 0L
+        private var flashSuccess = false
+
+        init {
+            setWillNotDraw(false)
+            isClickable = false
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        fun move(x: Float, y: Float) {
+            // Front camera mirrored into screen coordinates.
+            rawX = (1f - x).coerceIn(.025f, .975f)
+            rawY = y.coerceIn(.03f, .97f)
+            if (!initialized) {
+                initialized = true
+                sx = rawX; sy = rawY
+            }
+            visible = true
+            animateNextFrame()
+        }
+
+        fun hideCursor() {
+            if (visible) {
+                visible = false
+                invalidate()
+            }
+        }
+
+        fun isCursorReady(): Boolean = initialized && visible && width > 0 && height > 0
+
+        fun cursorOnScreen(): Pair<Float, Float> {
+            val location = IntArray(2)
+            getLocationOnScreen(location)
+            return (location[0] + sx * width) to (location[1] + sy * height)
+        }
+
+        fun message(value: String) {
+            toast = value.take(70)
+            toastUntil = SystemClock.uptimeMillis() + 1350L
+            invalidate()
+            postDelayed({ invalidate() }, 1400L)
+        }
+
+        fun flashClick(success: Boolean) {
+            flashSuccess = success
+            flashUntil = SystemClock.uptimeMillis() + 200L
+            invalidate()
+            postDelayed({ invalidate() }, 240L)
+        }
+
+        private fun animateNextFrame() {
+            if (animating) return
+            animating = true
+            postOnAnimation {
+                animating = false
+                val now = SystemClock.uptimeMillis()
+                val dt = if (lastTick == 0L) 16f else (now - lastTick).coerceIn(1L, 60L).toFloat()
+                lastTick = now
+                // Time-based exponential smoothing is framerate independent.
+                val gain = 1f - exp(-dt / 28f)
+                sx += (rawX - sx) * gain
+                sy += (rawY - sy) * gain
+                invalidate()
+                if (visible && hypot(rawX - sx, rawY - sy) > .0007f) animateNextFrame()
+            }
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val now = SystemClock.uptimeMillis()
+            if (visible) {
+                val x = sx * width
+                val y = sy * height
+                val r = 9f * density
+                canvas.drawCircle(x + density, y + 2f * density, r + 5f * density, shadow)
+                canvas.drawCircle(x, y, r + 1.5f * density, cursorRing)
+                canvas.drawCircle(x, y, r * .68f, cursorFill)
+                if (now < flashUntil) {
+                    val paint = Paint(cursorRing).apply {
+                        color = if (flashSuccess) Color.GREEN else Color.RED
+                        strokeWidth = 4f * density
+                    }
+                    canvas.drawCircle(x, y, 18f * density, paint)
+                }
+            }
+            if (toast.isNotEmpty() && now < toastUntil) {
+                val widthPx = labelPaint.measureText(toast)
+                val cx = width / 2f
+                val cy = 88f * density
+                val pad = 16f * density
+                val bounds = RectF(cx - widthPx / 2f - pad, cy - 24f * density,
+                    cx + widthPx / 2f + pad, cy + 14f * density)
+                canvas.drawRoundRect(bounds, 15f * density, 15f * density, bg)
+                canvas.drawText(toast, cx - widthPx / 2f, cy + 1f * density, labelPaint)
+            }
+        }
     }
 }

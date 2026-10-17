@@ -86,31 +86,33 @@ private fun yuv420888ToNv21(image: ImageProxy): ByteArray {
 }
 
 
-/** CameraX RGBA path: avoid old per-frame YUV to JPEG to Bitmap encoding.
- * CameraX uses A,R,G,B channels in its packed first-plane ByteBuffer.
- */
-fun ImageProxy.toOptimizedBitmap(): android.graphics.Bitmap {
+/** Fast CameraX packed RGBA input, no JPEG conversion. */
+fun ImageProxy.toOptimizedBitmap(): Bitmap {
     if (format != android.graphics.PixelFormat.RGBA_8888) return toBitmap()
     val plane = planes[0]
-    val pixels = plane.buffer
-    val colors = IntArray(width * height)
-    var index = 0
-    for (y in 0 until height) {
-        val row = y * plane.rowStride
-        for (x in 0 until width) {
-            val offset = row + x * plane.pixelStride
-            val a = pixels.get(offset).toInt() and 255
-            val r = pixels.get(offset + 1).toInt() and 255
-            val g = pixels.get(offset + 2).toInt() and 255
-            val b = pixels.get(offset + 3).toInt() and 255
-            colors[index++] = (a shl 24) or (r shl 16) or (g shl 8) or b
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val buffer = plane.buffer.duplicate()
+    buffer.rewind()
+    val length = width * height * 4
+    if (plane.pixelStride == 4 && plane.rowStride == width * 4) {
+        // CameraX RGBA plane can be copied directly into ARGB_8888's native byte layout.
+        bitmap.copyPixelsFromBuffer(buffer)
+    } else {
+        // Rare camera row padding: copy each scanline in native RGBA order.
+        val compact = java.nio.ByteBuffer.allocateDirect(length)
+        val bytes = ByteArray(width * 4)
+        for (row in 0 until height) {
+            buffer.position(row * plane.rowStride)
+            buffer.get(bytes)
+            compact.put(bytes)
         }
+        compact.flip()
+        bitmap.copyPixelsFromBuffer(compact)
     }
-    val bitmap = android.graphics.Bitmap.createBitmap(
-        width, height, android.graphics.Bitmap.Config.ARGB_8888)
-    bitmap.setPixels(colors, 0, width, 0, 0, width, height)
-    val deg = imageInfo.rotationDegrees
-    if (deg == 0) return bitmap
-    val matrix = android.graphics.Matrix().apply { postRotate(deg.toFloat()) }
-    return android.graphics.Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true)
+    val rotation = imageInfo.rotationDegrees
+    if (rotation == 0) return bitmap
+    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+    val rotated = Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true)
+    if (rotated !== bitmap) bitmap.recycle()
+    return rotated
 }

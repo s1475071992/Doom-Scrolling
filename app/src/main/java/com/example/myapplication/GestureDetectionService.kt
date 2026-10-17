@@ -32,7 +32,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
     }
 
     companion object {
-        private const val CHANNEL_ID = "GestureDetectionChannel"
+        private const val CHANNEL_ID = "GestureDetectionChannel_v3"
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "com.example.myapplication.STOP_CAMERA_FGS"
         @Volatile private var instance: GestureDetectionService? = null
@@ -93,6 +93,8 @@ class GestureDetectionService : Service(), LifecycleOwner {
             return START_NOT_STICKY
         }
         val notification = createNotification()
+        // Required before opening the camera. Notif channel is explicitly visible,
+        // though Android 13+ still requires the user to grant POST_NOTIFICATIONS.
         startForeground(NOTIFICATION_ID, notification)
         if (active) return START_NOT_STICKY
         active = true
@@ -152,15 +154,18 @@ class GestureDetectionService : Service(), LifecycleOwner {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("隔空手势运行中 · Air Gestures")
-            .setContentText("前置摄像头正在识别手势 · 点击进入设置")
+            .setContentTitle("隔空手势正在运行")
+            .setContentText("全局识别运行中 · 点击设置 · 可在这里停止")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(pendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止手势", stopPendingIntent)
             .setOngoing(true)
-            .setShowWhen(false)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }
 
@@ -168,11 +173,12 @@ class GestureDetectionService : Service(), LifecycleOwner {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Gesture Detection Service Channel",
-                NotificationManager.IMPORTANCE_LOW
+                "Air Gestures (持续识别通知)",
+                NotificationManager.IMPORTANCE_DEFAULT
             )
             serviceChannel.setShowBadge(false)
             serviceChannel.enableVibration(false)
+            serviceChannel.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             serviceChannel.enableLights(false)
             serviceChannel.setSound(null, null)
             val manager = getSystemService(NotificationManager::class.java)

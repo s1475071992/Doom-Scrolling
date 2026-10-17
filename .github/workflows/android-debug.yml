@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   push:
-    branches: [main, feature/full-gesture-controls, feature/gesture-v1-2-hud-airmouse]
+    branches: [main, feature/full-gesture-controls, feature/gesture-v1-2-hud-airmouse, fix/airmouse-feedback-notification-v13]
   pull_request:
     branches: [main]
   workflow_dispatch:

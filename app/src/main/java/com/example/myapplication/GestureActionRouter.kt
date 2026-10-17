@@ -18,9 +18,8 @@ object GestureActionRouter {
 
     fun clickCursor() {
         val service = ScrollAccessibilityService.getInstance() ?: return
+        // Async dispatch callback reports success/failure; do not pre-announce success.
         service.clickCursor()
-        GestureDiagnostics.action("Air mouse click")
-        if (GestureRuntime.feedback) service.showGestureFeedback("👆 鼠标点击")
     }
 
     fun dispatch(name: String) {
@@ -28,10 +27,13 @@ object GestureActionRouter {
             val service = ScrollAccessibilityService.getInstance() ?: return@post
             if (!ScrollAccessibilityService.isEnabled()) return@post
             val action = GestureActionMap.actionFor(service, name)
-            if (action != GestureActionMap.NONE) {
-                GestureDiagnostics.action("$name → $action")
-                service.showGestureFeedback("${GestureCatalog.labels[name] ?: name} → $action")
-            }
+            val description = GestureCatalog.labels[name] ?: name
+            GestureDiagnostics.action(if (action == GestureActionMap.NONE)
+                "$name: unmapped" else "$name → $action")
+            // Show feedback for recognised but UNMAPPED gestures too, so the
+            // user can determine whether recognition or mapping is at fault.
+            service.showGestureFeedback(if (action == GestureActionMap.NONE)
+                "$description · 未映射" else "$description → $action")
             when (action) {
                 GestureActionMap.NONE -> Unit
                 GestureActionMap.SCROLL_DOWN -> ScrollAccessibilityService.performScroll(850)
