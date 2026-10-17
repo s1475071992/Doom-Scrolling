@@ -56,8 +56,12 @@ android {
 }
 
 dependencies {
-    // LiteRT 2.x CompiledModel enables Qualcomm + MediaTek NPU JIT probing.
-    implementation("com.google.ai.edge.litert:litert:2.2.0")
+    // Official LiteRT 2.3 Maven packages now ship both vendor compiler/dispatch plugins.
+    // Missing proprietary QNN DSP/HTP libs still require device-matched installation.
+    implementation("com.google.ai.edge.litert:litert:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-gpu:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-npu-runtime-mediatek:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-npu-runtime-qualcomm:2.3.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

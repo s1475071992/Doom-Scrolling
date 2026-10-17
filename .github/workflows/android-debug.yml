@@ -46,17 +46,9 @@ jobs:
           python3 -m unittest discover -s tools/tests -v
           python3 tools/extract_mediapipe_submodels.py \
             app/src/main/assets/gesture_recognizer.task app/src/main/assets
-          curl --fail --location --retry 3 \
-            -o /tmp/litert_npu_jit.zip \
-            https://github.com/google-ai-edge/LiteRT/releases/download/v2.2.0/litert_npu_runtime_libraries_jit.zip
-          echo 'd6d160104f110e690f1c9b0c54ab3855af1a12e405dcc6e644dd7e3e1955aac4  /tmp/litert_npu_jit.zip' \
-            | sha256sum --check
-          unzip -Z1 /tmp/litert_npu_jit.zip | grep -E 'mediatek_runtime|qualcomm_runtime_v'
-          # Experimental APK includes actual vendor dispatcher/compiler plugins.
-          # Qualcomm-specific QNN/HTP runtime and every other Hexagon variant
-          # still require separately licensed/vendor-matched distribution.
-          python3 tools/install_npu_jit_plugins.py \
-            /tmp/litert_npu_jit.zip app/src/main/jniLibs/arm64-v8a
+          # LiteRT 2.3.0 fetches the MediaTek and Qualcomm NPU plugins from
+          # official Maven rather than the incomplete 2.2.0 vendor archive.
+          echo 'LiteRT 2.3 NPU vendor libraries will be resolved by Gradle.'
       - name: Test, Android Lint and build debug APK
         run: |
           chmod +x gradlew

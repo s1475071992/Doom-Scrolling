@@ -55,3 +55,9 @@ CI 已下载官方手势模型并递归解包，取得 palm_detection.tflite 与
 2. 测试 Snapdragon v75 和 MediaTek 芯片，确认 `NpuSubmodelDeviceTest` 的真实模型推理输出。
 3. 通过系统硬件性能分析工具确认真正 NPU 执行，不把只初始化成功、但回落 CPU 的结果计为通过。
 4. 只有在手掌/手指关键点流水线在两个平台全部跑通并通过手势、空鼠、发热对照测试后才合并到稳定版。
+
+## 2026-10-17：迁移 LiteRT 2.3.0 官方双厂商依赖
+
+官方新版本现已提供 `litert-npu-runtime-mediatek:2.3.0` 和 `litert-npu-runtime-qualcomm:2.3.0` Maven 包，实验构建改用这两项（加 `litert:2.3.0`、`litert-gpu:2.3.0`），不再从缺失 MediaTek 插件的旧 ZIP 复制二进制文件。
+
+这只解决 **NPU 编译／分派插件的打包来源**；骁龙 HTP 与天玑设备固件支持、各芯片型号匹配的厂商驱动以及模型算子委托覆盖率仍需真机验证。已打包不意味着实际运行在 NPU 上。
