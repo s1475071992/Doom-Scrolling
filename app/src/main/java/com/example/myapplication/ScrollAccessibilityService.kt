@@ -23,14 +23,24 @@ class ScrollAccessibilityService : AccessibilityService() {
         if (isEnabled) hud.move(x, y)
     }
     fun hideCursor() { hud.hideCursor() }
+
+    fun beginCursorDrag() {
+        if (isEnabled) hud.beginDrag()
+    }
+    fun updateCursorDrag() {
+        if (isEnabled) hud.updateDrag()
+    }
+    fun endCursorDrag() {
+        hud.endDrag()
+    }
     fun clickCursor() {
         if (!isEnabled) {
-            GestureDiagnostics.action("Air mouse: accessibility disabled")
+            GestureDiagnostics.action("空鼠：无障碍未开启")
             return
         }
         hud.click { success ->
-            GestureDiagnostics.action(if (success) "Air mouse: tap succeeded"
-                                      else "Air mouse: tap FAILED / 点击失败")
+            GestureDiagnostics.action(if (success) "空鼠：单击成功"
+                                      else "空鼠：单击失败")
             if (GestureRuntime.feedback) {
                 hud.message(if (success) "✓ 已点击" else "× 点击失败，请检查无障碍权限")
             }

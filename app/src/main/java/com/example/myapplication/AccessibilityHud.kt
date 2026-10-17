@@ -28,6 +28,14 @@ class AccessibilityHud(private val service: AccessibilityService) {
     private var overlay: OverlayView? = null
     private var failed = false
     private var clickBusy = false
+    private var dragActive=false
+    private var dragDispatching=false
+    private var dragEnding=false
+    private var dragStroke: GestureDescription.StrokeDescription?=null
+    private var dragX=0f
+    private var dragY=0f
+    private var pendingX=0f
+    private var pendingY=0f
 
     private fun ensure(): OverlayView? {
         overlay?.let { return it }
@@ -44,16 +52,16 @@ class AccessibilityHud(private val service: AccessibilityService) {
                 android.graphics.PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                title = "Air Gestures Feedback"
+                title = "隔空手势提示"
             }
             wm.addView(v, layout)
             overlay = v
-            GestureDiagnostics.overlay("OVERLAY_READY")
+            GestureDiagnostics.overlay("悬浮提示已连接")
             v
         } catch (error: Exception) {
             failed = true
             Log.e("AirGestureHud", "Cannot display accessibility overlay", error)
-            GestureDiagnostics.overlay("OVERLAY_ERROR: ${error.javaClass.simpleName}")
+            GestureDiagnostics.overlay("悬浮层错误：${error.javaClass.simpleName}")
             null
         }
     }
@@ -78,7 +86,7 @@ class AccessibilityHud(private val service: AccessibilityService) {
             val v = overlay
             if (v == null || !v.isCursorReady() || clickBusy) {
                 Log.w("AirGestureHud", "Click unavailable: cursor missing or busy")
-                GestureDiagnostics.action("AIR_MOUSE_CLICK_SKIPPED")
+                GestureDiagnostics.action("点击失败：光标未就绪")
                 onResult(false)
                 return@post
             }
@@ -116,8 +124,90 @@ class AccessibilityHud(private val service: AccessibilityService) {
         }
     }
 
+    /** Android 8+ 连续笔画，模拟手指一直按住屏幕拖动。 */
+    fun beginDrag() {
+        main.post {
+            if (android.os.Build.VERSION.SDK_INT < 26) {
+                message("当前系统不支持连续拖动")
+                GestureDiagnostics.action("系统不支持拖动")
+                return@post
+            }
+            val view=overlay ?: return@post
+            if (!view.isCursorReady() || clickBusy || dragActive) return@post
+            val point=view.cursorOnScreen()
+            dragX=point.first;dragY=point.second
+            pendingX=dragX;pendingY=dragY
+            dragActive=true;dragDispatching=false;dragEnding=false;dragStroke=null
+            dispatchDrag()
+        }
+    }
+
+    fun updateDrag() {
+        main.post {
+            if (!dragActive) return@post
+            val point=overlay?.cursorOnScreen() ?: return@post
+            pendingX=point.first;pendingY=point.second
+            dispatchDrag()
+        }
+    }
+
+    fun endDrag() {
+        main.post {
+            if (!dragActive) return@post
+            dragEnding=true
+            dispatchDrag()
+        }
+    }
+
+    private fun dispatchDrag() {
+        if (!dragActive || dragDispatching) return
+        val prev=dragStroke
+        val ending=dragEnding
+        if(prev!=null && !ending &&
+            hypot(pendingX-dragX,pendingY-dragY)<2.5f) return
+        val x=if(prev==null) dragX else pendingX
+        val y=if(prev==null) dragY else pendingY
+        val path=Path().apply {
+            moveTo(dragX,dragY)
+            lineTo(x,y)
+        }
+        try {
+            val next=if(prev==null) GestureDescription.StrokeDescription(path,0L,40L,true)
+                     else prev.continueStroke(path,0L,52L,!ending)
+            dragDispatching=true
+            val sent=service.dispatchGesture(GestureDescription.Builder()
+                .addStroke(next).build(),
+                object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        dragDispatching=false
+                        dragStroke=next
+                        dragX=x;dragY=y
+                        if(prev!=null && ending) {
+                            dragActive=false
+                            dragStroke=null
+                            GestureDiagnostics.action("拖动结束")
+                        } else dispatchDrag()
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        failDrag()
+                    }
+                }, main)
+            if(!sent) failDrag()
+        } catch(e: Exception) {
+            Log.e("AirGestureHud","拖动失败",e)
+            failDrag()
+        }
+    }
+
+    private fun failDrag() {
+        dragActive=false;dragDispatching=false;dragEnding=false;dragStroke=null
+        GestureDiagnostics.action("拖动失败：系统中断")
+        message("拖动失败，请检查无障碍")
+    }
+
     fun clear() {
         main.post {
+            dragActive=false;dragDispatching=false;dragStroke=null;dragEnding=false
             val v = overlay
             overlay = null
             if (v != null) {

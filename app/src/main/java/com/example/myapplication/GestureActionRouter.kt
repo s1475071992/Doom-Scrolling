@@ -27,13 +27,13 @@ object GestureActionRouter {
             val service = ScrollAccessibilityService.getInstance() ?: return@post
             if (!ScrollAccessibilityService.isEnabled()) return@post
             val action = GestureActionMap.actionFor(service, name)
-            val description = GestureCatalog.labels[name] ?: name
+            val description = GestureCatalog.label(name)
             GestureDiagnostics.action(if (action == GestureActionMap.NONE)
-                "$name: unmapped" else "$name → $action")
+                "$description：未设置动作" else "$description → ${GestureActionMap.label(action)}")
             // Show feedback for recognised but UNMAPPED gestures too, so the
             // user can determine whether recognition or mapping is at fault.
             service.showGestureFeedback(if (action == GestureActionMap.NONE)
-                "$description · 未映射" else "$description → $action")
+                "$description：未设置动作" else "$description → ${GestureActionMap.label(action)}")
             when (action) {
                 GestureActionMap.NONE -> Unit
                 GestureActionMap.SCROLL_DOWN -> ScrollAccessibilityService.performScroll(850)

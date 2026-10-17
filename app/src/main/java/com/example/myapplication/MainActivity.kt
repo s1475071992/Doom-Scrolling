@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
     private val KEY_ENABLED = "gesture_scrolling_enabled"
     
     // Create a mutable state that can be accessed by both Compose and the Analyzer
-    private val _scrollStatus = mutableStateOf("Ready")
+    private val _scrollStatus = mutableStateOf("就绪")
     val scrollStatusState: State<String> = _scrollStatus
     
     private val _isScrollingEnabledPersisted = mutableStateOf(false)
@@ -97,9 +97,9 @@ class MainActivity : ComponentActivity() {
         if (_isScrollingEnabledPersisted.value) {
             ScrollAccessibilityService.setEnabled(true)
             _scrollStatus.value = if (ScrollAccessibilityService.getInstance() == null) {
-                "Accessibility Service NOT connected. Please enable it in Settings."
+                "无障碍服务未连接，请到系统设置中开启"
             } else {
-                "Ready - Set your gesture mappings and show a hand pose."
+                "已就绪，请进行手指翻动或捏合移动"
             }
         }
 
@@ -178,7 +178,7 @@ class MainActivity : ComponentActivity() {
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_ENABLED, false).apply()
             ScrollAccessibilityService.setEnabled(false)
-            _scrollStatus.value = "Camera service stopped. Tap Enable to restart."
+            _scrollStatus.value = "摄像头识别已停止，请点击开启"
         }
     }
 
@@ -204,7 +204,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (_isScrollingEnabledPersisted.value && !GestureDetectionService.isRunning()) {
             _isScrollingEnabledPersisted.value = false
-            _scrollStatus.value = "Gesture service stopped — tap Enable again."
+            _scrollStatus.value = "识别服务已停止，请重新开启"
         }
 
         // The Activity must never reopen the camera while our FGS owns it.
@@ -245,11 +245,11 @@ class MainActivity : ComponentActivity() {
         // Must be invoked from the visible Activity after both permissions exist.
         val permissions = checkAllPermissions()
         if (!permissions.hasCamera || !permissions.hasAccessibility) {
-            _scrollStatus.value = "Grant Camera and Accessibility before enabling."
+            _scrollStatus.value = "请先授权相机与无障碍服务"
             return
         }
         if (ScrollAccessibilityService.getInstance() == null) {
-            _scrollStatus.value = "Accessibility service is not connected yet."
+            _scrollStatus.value = "无障碍服务尚未连接"
             return
         }
         try {
@@ -264,14 +264,14 @@ class MainActivity : ComponentActivity() {
             GestureDetectionService.start(this)
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_ENABLED, true).apply()
-            _scrollStatus.value = "Camera service starting — you can switch to any app."
+            _scrollStatus.value = "正在启动摄像头识别，可切换到其他应用"
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Unable to start camera service", e)
             _isScrollingEnabledPersisted.value = false
             ScrollAccessibilityService.setEnabled(false)
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_ENABLED, false).apply()
-            _scrollStatus.value = "Camera service could not start: ${e.message}"
+            _scrollStatus.value = "摄像头服务启动失败：${e.message}"
             bindCameraUseCases()
         }
     }
@@ -283,7 +283,7 @@ class MainActivity : ComponentActivity() {
         ScrollAccessibilityService.setEnabled(false)
         GestureDetectionService.stop(this)
         gestureScrollController.reset()
-        _scrollStatus.value = "Gesture service stopped."
+        _scrollStatus.value = "手势识别已停止"
         // Allow the service time to release its CameraX use case.
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (!_isScrollingEnabledPersisted.value && isInForeground) bindCameraUseCases()
@@ -382,7 +382,7 @@ fun MainScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            text = "Scrollable",
+            text = "隔空手势",
             style = MaterialTheme.typography.headlineLarge
         )
 
@@ -392,7 +392,7 @@ fun MainScreen(
         // Do not bind a second preview/analysis use case to the service's camera.
         if (isScrollingEnabledState.value) {
             Card(modifier = Modifier.fillMaxWidth()) {
-                Text("Camera recognition active in foreground service. You may switch apps.\n摄像头识别服务已开启，可以切换到其他应用。",
+                Text("摄像头识别已开启，可以切换到其他应用。",
                     modifier = Modifier.padding(16.dp))
             }
         } else {
@@ -410,7 +410,7 @@ fun MainScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Status: ${scrollStatus.value}",
+                    text = "运行状态：${scrollStatus.value}",
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
@@ -420,10 +420,10 @@ fun MainScreen(
         val snapshot = GestureDiagnostics.current
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
-                Text("识别调试 / Live diagnostics",
+                Text("实时识别调试",
                     style = MaterialTheme.typography.titleMedium)
-                Text("FPS: " + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
-                Text("手势: ${snapshot.name}")
+                Text("识别帧率：" + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
+                Text("识别手势：${snapshot.name}")
                 Text("置信度: " + String.format(java.util.Locale.US,
                     "%.0f%%", snapshot.confidence * 100f))
                 Text("状态: ${snapshot.state}")
@@ -433,7 +433,7 @@ fun MainScreen(
                     OutlinedButton(onClick = {
                         val service = ScrollAccessibilityService.getInstance()
                         if (service == null || !ScrollAccessibilityService.isEnabled()) {
-                            GestureDiagnostics.action("Accessibility service unavailable")
+                            GestureDiagnostics.action("无障碍服务未连接")
                         } else {
                             service.showGestureFeedback("✓ 跨应用悬浮提示测试")
                         }
@@ -446,7 +446,7 @@ fun MainScreen(
         Row(modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            Text("跨 App 手势触发提示")
+            Text("跨应用显示手势提示")
             Switch(checked = feedbackEnabled, onCheckedChange = {
                 feedbackEnabled = it
                 GestureRuntime.setFeedback(context, it)
@@ -458,8 +458,8 @@ fun MainScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("实验性空鼠 / Air Mouse")
-                Text("食指控制光标，拇指＋食指捏合点击",
+                Text("实验性空中鼠标")
+                Text("食指移动光标，短捏合松开点击，捏合移动并松开完成拖动",
                     style = MaterialTheme.typography.bodySmall)
             }
             Switch(checked = airMouseEnabled, onCheckedChange = {
@@ -480,12 +480,12 @@ fun MainScreen(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = "Camera permission required",
+                        text = "需要相机权限",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Button(onClick = { requestCameraPermission() }) {
-                        Text("Grant Camera Permission")
+                        Text("授权相机")
                     }
                 }
             }
@@ -502,7 +502,7 @@ fun MainScreen(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = "Accessibility permission required for system-wide scrolling",
+                        text = "需要无障碍权限才能在其他应用执行动作",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -512,7 +512,7 @@ fun MainScreen(
                             context.startActivity(intent)
                         }
                     ) {
-                        Text("Open Accessibility Settings")
+                        Text("打开无障碍设置")
                     }
                 }
             }
@@ -566,9 +566,9 @@ fun MainScreen(
             ) {
                 Text(
                     text = if (isScrollingEnabledState.value) {
-                        "Disable Gesture Scrolling"
+                        "关闭手势识别"
                     } else {
-                        "Enable Gesture Scrolling"
+                        "开启手势识别"
                     }
                 )
             }
@@ -578,7 +578,7 @@ fun MainScreen(
         Button(
             onClick = { context.startActivity(Intent(context, GestureMappingActivity::class.java)) },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("手势映射 / Configure Gestures") }
+        ) { Text("配置动作映射") }
 
         // Instructions
         Card(
@@ -588,24 +588,24 @@ fun MainScreen(
                 modifier = Modifier.padding(16.dp)
             ) {
                 Text(
-                    text = "Instructions:",
+                    text = "操作说明",
                     style = MaterialTheme.typography.titleMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "• Show a gesture clearly in the front camera",
+                    text = "• 将食指或食指、中指放在前置摄像头前",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• Map each gesture to an action using Hand Gestures",
+                    text = "• 手指实际上翻、下翻才能触发翻页",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• Hold the pose for a few frames; once per held pose",
+                    text = "• 单指或双指捏合后，手掌向上下左右移动",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• Move your hand away before repeating the same pose",
+                    text = "• 松开或恢复初始姿势后才能再次触发",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

@@ -100,7 +100,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
         active = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         android.util.Log.d("GestureService", "Service started, callback set: ${statusCallback != null}")
-        updateStatus("Service starting...")
+        updateStatus("正在启动识别服务")
         startBackgroundDetection()
         // Do not restart a camera FGS from an invisible process.
         // User re-enables it explicitly from the visible Activity after a crash/reboot.
@@ -119,8 +119,8 @@ class GestureDetectionService : Service(), LifecycleOwner {
                 handDetectionAnalyzer?.release()
                 handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
                     gestureScrollController.processGesture(gesture)
-                    updateStatus(if (gesture == null) "WAITING FOR GESTURE"
-                        else "GESTURE: ${gesture.gestureName}")
+                    updateStatus(if (gesture == null) "等待手势动作"
+                        else "检测到手部：${GestureCatalog.label(gesture.gestureName)}")
                 }
                 val analysis = ImageAnalysis.Builder()
                     .setTargetResolution(android.util.Size(640, 480))
@@ -130,10 +130,10 @@ class GestureDetectionService : Service(), LifecycleOwner {
                 analysis.setAnalyzer(cameraExecutor, handDetectionAnalyzer!!)
                 provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
                 isCameraBound = true
-                updateStatus("Camera active — gestures work when switching apps.")
+                updateStatus("摄像头识别运行中，可跨应用控制")
             } catch (e: Exception) {
                 android.util.Log.e("GestureService", "Camera binding failed", e)
-                updateStatus("Camera error: ${e.message}")
+                updateStatus("摄像头运行错误：${e.message}")
                 stopSelf()
             }
         }, ContextCompat.getMainExecutor(this))
@@ -173,7 +173,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Air Gestures (持续识别通知)",
+                "隔空手势持续通知",
                 NotificationManager.IMPORTANCE_DEFAULT
             )
             serviceChannel.setShowBadge(false)

@@ -20,9 +20,9 @@ class GestureMappingActivity : ComponentActivity() {
             MaterialTheme {
                 Scaffold { insets ->
                     Column(Modifier.fillMaxSize().padding(insets).padding(16.dp)) {
-                        Text("Gesture mappings / 手势映射",
+                        Text("动作手势映射",
                             style = MaterialTheme.typography.headlineSmall)
-                        Text("MediaPipe 识别手势，Doom 原有无障碍服务执行操作",
+                        Text("只有手指上翻、下翻或捏合移动时才触发操作；静止手形不会触发。",
                             style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(12.dp))
                         val names = remember {
@@ -33,7 +33,7 @@ class GestureMappingActivity : ComponentActivity() {
                                 (0 until a.length()).map { a.getString(it) }
                                     .filterNot { it == "None" || it == "No_Gesture" }
                             } catch (_: Exception) { emptyList() }
-                            (GestureCatalog.known + customLabels.map { GestureCatalog.canonical(it) }).distinct()
+                            GestureCatalog.known
                         }
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(names) { name ->
@@ -43,15 +43,15 @@ class GestureMappingActivity : ComponentActivity() {
                                 var expanded by remember { mutableStateOf(false) }
                                 Card(Modifier.fillMaxWidth()) {
                                     Row(Modifier.fillMaxWidth().padding(12.dp)) {
-                                        Text(GestureCatalog.labels[name] ?: name,
+                                        Text(GestureCatalog.label(name),
                                             modifier = Modifier.weight(1f),
                                             style = MaterialTheme.typography.bodyMedium)
                                         Box {
-                                            TextButton(onClick = { expanded = true }) { Text(action) }
+                                            TextButton(onClick = { expanded = true }) { Text(GestureActionMap.label(action)) }
                                             DropdownMenu(expanded = expanded,
                                                 onDismissRequest = { expanded = false }) {
                                                 GestureActionMap.actions.forEach { next ->
-                                                    DropdownMenuItem(text = { Text(next) },
+                                                    DropdownMenuItem(text = { Text(GestureActionMap.label(next)) },
                                                         onClick = {
                                                             action = next
                                                             GestureActionMap.save(
