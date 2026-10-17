@@ -19,7 +19,7 @@ import kotlin.math.atan2
  * Backwards-compatible callback type for the existing Doom Activity and Service.
  */
 class HandDetectionAnalyzer(
-    context: Context,
+    private val context: Context,
     private val onHandsDetected: (HandGesture?) -> Unit
 ) : ImageAnalysis.Analyzer {
     data class NormalizedPoint(val x: Float, val y: Float, val z: Float = 0f)
