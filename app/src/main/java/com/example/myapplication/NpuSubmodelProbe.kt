@@ -102,10 +102,13 @@ class NpuSubmodelProbe private constructor(
         inputs[0].writeFloat(input)
         val start = SystemClock.elapsedRealtimeNanos()
         model.run(inputs, outputs)
+        // Include CPU-side tensor readback. Some accelerator APIs complete
+        // asynchronously, so model.run() alone understates effective latency.
+        val result = outputs.map { it.readFloat() }
         lastRunNanos = SystemClock.elapsedRealtimeNanos() - start
         totalRunNanos += lastRunNanos
         runCount++
-        return outputs.map { it.readFloat() }
+        return result
     }
 
     override fun close() {
