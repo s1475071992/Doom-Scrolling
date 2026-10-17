@@ -61,6 +61,13 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Print Lint failures for experimental compatibility audit
+        if: failure()
+        shell: bash
+        run: |
+          if test -f app/build/reports/lint-results-debug.txt; then
+            grep -n -A 3 -E '^.*Error:' app/build/reports/lint-results-debug.txt | head -240 || true
+          fi
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4

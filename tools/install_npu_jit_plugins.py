@@ -24,6 +24,11 @@ def install(archive: pathlib.Path, directory: pathlib.Path):
                          if name.startswith(prefix + "/")
                          and "/arm64-v8a/" in name and name.endswith("/" + lib)]
                 if len(found) != 1:
+                    # Official LiteRT 2.2.0 JIT zip does not ship MediaTek
+                    # compiler/dispatch plugins. DO NOT pretend it is NPU ready.
+                    if vendor == "mediatek":
+                        print(f"UNAVAILABLE {vendor}: {lib} absent from official JIT zip")
+                        continue
                     raise ValueError(f"{vendor}: missing or ambiguous {lib}: {found}")
                 contents = z.read(found[0])
                 if len(contents) < 10_000 or contents[:4] != bytes([127, 69, 76, 70]):
