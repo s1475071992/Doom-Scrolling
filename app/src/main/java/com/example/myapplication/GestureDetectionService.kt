@@ -39,7 +39,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
         @Volatile private var active = false
 
         fun isRunning(): Boolean = active && instance != null
-        private var statusCallback: StatusCallback? = null
+        @Volatile private var statusCallback: StatusCallback? = null
 
         private const val STATUS_THROTTLE_MS = 200L
         private var lastStatusTimeMs = 0L
@@ -65,15 +65,12 @@ class GestureDetectionService : Service(), LifecycleOwner {
 
         private fun updateStatus(status: String) {
             val now = System.currentTimeMillis()
-            if (status == lastStatusValue && now - lastStatusTimeMs < STATUS_THROTTLE_MS) {
-                return
-            }
-            if (now - lastStatusTimeMs < STATUS_THROTTLE_MS) {
-                return
-            }
+            // Never post identical status strings on every camera frame.
+            // FPS and confidence have their own slower diagnostics channel.
+            if (status == lastStatusValue) return
+            if (now - lastStatusTimeMs < STATUS_THROTTLE_MS) return
             lastStatusTimeMs = now
             lastStatusValue = status
-            android.util.Log.d("GestureService", "Updating status: $status, callback: ${statusCallback != null}")
             statusCallback?.onStatusChanged(status)
         }
     }
@@ -120,7 +117,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
                 handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
                     gestureScrollController.processGesture(gesture)
                     updateStatus(if (gesture == null) "等待手势动作"
-                        else "检测到手部：${GestureCatalog.label(gesture.gestureName)}")
+                        else "已检测到手部，等待动作")
                 }
                 val analysis = ImageAnalysis.Builder()
                     .setTargetResolution(android.util.Size(640, 480))
@@ -192,6 +189,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
         active = false
         ScrollAccessibilityService.setEnabled(false)
         GestureDiagnostics.reset()
+        gestureScrollController.reset()
         getSharedPreferences("ScrollablePrefs", Context.MODE_PRIVATE)
             .edit().putBoolean("gesture_scrolling_enabled", false).apply()
         super.onDestroy()

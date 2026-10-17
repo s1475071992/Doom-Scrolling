@@ -12,7 +12,8 @@ import kotlinx.coroutines.launch
 
 class ScrollAccessibilityService : AccessibilityService() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(serviceJob + Dispatchers.Main)
     private var isEnabled = false
     private val hud by lazy { AccessibilityHud(this) }
 
@@ -112,7 +113,11 @@ class ScrollAccessibilityService : AccessibilityService() {
             android.util.Log.d("ScrollService", "Static setEnabled: $enabled")
             this.enabled = enabled
             instance?.isEnabled = enabled
-            if (!enabled) instance?.hideCursor()
+            if (!enabled) {
+                pendingCommand = null
+                gestureInProgress = false
+                instance?.hideCursor()
+            }
         }
 
         fun isEnabled(): Boolean = enabled
@@ -121,14 +126,21 @@ class ScrollAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        gestureInProgress = false
+        pendingCommand = null
         this.isEnabled = enabled
         android.util.Log.d("ScrollService", "Accessibility service connected, enabled: $enabled")
     }
 
     override fun onDestroy() {
+        serviceJob.cancel()
+        pendingCommand = null
+        gestureInProgress = false
+        enabled = false
+        isEnabled = false
         hud.clear()
         super.onDestroy()
-        instance = null
+        if (instance === this) instance = null
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -152,7 +164,7 @@ class ScrollAccessibilityService : AccessibilityService() {
                 // Perform scroll gesture directly without finding scrollable node
                 // The gesture will work on the current active window
                 val gesture = createScrollGesture(deltaY)
-                dispatchGesture(gesture, object : GestureResultCallback() {
+                val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         super.onCompleted(gestureDescription)
                         android.util.Log.d("ScrollService", "Scroll gesture completed")
@@ -167,6 +179,11 @@ class ScrollAccessibilityService : AccessibilityService() {
                         flushPending(delayMs = 150)
                     }
                 }, null)
+                if (!accepted) {
+                    android.util.Log.w("ScrollService", "System declined scroll injection")
+                    gestureInProgress = false
+                    flushPending(delayMs = 150)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("ScrollService", "Error performing scroll", e)
                 gestureInProgress = false
@@ -185,7 +202,7 @@ class ScrollAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             try {
                 val gesture = createTapGesture()
-                dispatchGesture(gesture, object : GestureResultCallback() {
+                val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         super.onCompleted(gestureDescription)
                         android.util.Log.d("ScrollService", "Tap gesture completed")
@@ -200,6 +217,11 @@ class ScrollAccessibilityService : AccessibilityService() {
                         flushPending(delayMs = 180)
                     }
                 }, null)
+                if (!accepted) {
+                    android.util.Log.w("ScrollService", "System declined tap injection")
+                    gestureInProgress = false
+                    flushPending(delayMs = 180)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("ScrollService", "Error performing tap", e)
                 gestureInProgress = false
@@ -214,6 +236,7 @@ class ScrollAccessibilityService : AccessibilityService() {
         if (pending == null) return
 
         gestureHandler.postDelayed({
+            if (!enabled || instance == null) return@postDelayed
             when (pending) {
                 is PendingCommand.Scroll -> performScroll(pending.deltaY)
                 is PendingCommand.Tap -> performTap()
