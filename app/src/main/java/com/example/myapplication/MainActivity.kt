@@ -356,6 +356,7 @@ fun MainScreen(
                 Text("最后动作: ${snapshot.lastAction}")
                 Text("悬浮层: ${snapshot.overlay}")
                 Text("AI 推理后端: ${snapshot.backend}")
+                Text("设备状态: ${snapshot.battery}")
                 if (isScrollingEnabledState.value) {
                     OutlinedButton(onClick = {
                         val service = ScrollAccessibilityService.getInstance()

@@ -46,6 +46,7 @@ class HandDetectionAnalyzer(
     private var frameCount = 0
     private var measuredFps = 0f
     private var lastDiagnosticsAt = 0L
+    private var lastBatterySampleAt = 0L
     private var recognizer: GestureRecognizer? = null
     private var npuPipeline: NpuHandPipeline? = null
     @Volatile private var activeBackend: InferenceBackend? = null
@@ -179,6 +180,14 @@ class HandDetectionAnalyzer(
         // hand detection at low standby frequency to allow rapid wake-up.
         fallbackToCpuAfterGpuFailure()
         val now = SystemClock.uptimeMillis()
+        if (now - lastBatterySampleAt > 15_000L) {
+            lastBatterySampleAt = now
+            val batt = BatteryThermalSampler.read(context)
+            val temp = batt.batteryC?.let { "%.1f°C".format(java.util.Locale.US, it) }
+                ?: "未知"
+            val level = batt.level?.let { "$it%" } ?: "未知"
+            GestureDiagnostics.battery("电池 $temp · 电量 $level（非芯片温度）")
+        }
         val minInterval = RecognitionCadence.intervalMs(
             GestureRuntime.airMouse, GestureRuntime.powerSaving,
             now - lastHandAtMs

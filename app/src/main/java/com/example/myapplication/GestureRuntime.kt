@@ -72,7 +72,8 @@ object GestureDiagnostics {
         val lastAction: String = "—",
         val state: String = "等待动作",
         val overlay: String = "尚未建立",
-        val backend: String = "尚未启动"
+        val backend: String = "尚未启动",
+        val battery: String = "未采样"
     )
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var publishedState = ""
@@ -99,6 +100,9 @@ object GestureDiagnostics {
     }
     fun overlay(status: String) {
         main.post { current = current.copy(overlay = status) }
+    }
+    fun battery(status: String) {
+        main.post { if (current.battery != status) current = current.copy(battery = status) }
     }
     fun backend(status: String) {
         main.post { if (current.backend != status) current = current.copy(backend = status) }
