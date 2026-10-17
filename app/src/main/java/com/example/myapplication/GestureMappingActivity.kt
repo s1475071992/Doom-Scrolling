@@ -10,7 +10,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import org.json.JSONArray
 
 /** Own mapping screen. Does not request accessibility permission. */
 class GestureMappingActivity : ComponentActivity() {
@@ -22,19 +21,10 @@ class GestureMappingActivity : ComponentActivity() {
                     Column(Modifier.fillMaxSize().padding(insets).padding(16.dp)) {
                         Text("动作手势映射",
                             style = MaterialTheme.typography.headlineSmall)
-                        Text("上翻统一从握拳起手；下翻从伸直手指起手；捏合在任意位置开始，移动方向决定对应操作。",
+                        Text("只有六项普通手势：握拳伸食指上翻、伸直食指弯下翻、双指伸直后上下左右移动。起手式需保持约半秒，确认后再动作。空鼠捏合不受影响。",
                             style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(12.dp))
-                        val names = remember {
-                            val customLabels = try {
-                                val json = assets.open("gesture_labels.json")
-                                    .bufferedReader().use { it.readText() }
-                                val a = JSONArray(json)
-                                (0 until a.length()).map { a.getString(it) }
-                                    .filterNot { it == "None" || it == "No_Gesture" }
-                            } catch (_: Exception) { emptyList() }
-                            GestureCatalog.known
-                        }
+                        val names = GestureCatalog.known
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(names) { name ->
                                 var action by remember(name) {

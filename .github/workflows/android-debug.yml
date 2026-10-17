@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   push:
-    branches: [main, fix/shared-fist-pinch-start-v16]
+    branches: [main, fix/six-gestures-stable-poses-v17]
   pull_request:
     branches: [main]
   workflow_dispatch:
