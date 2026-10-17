@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
-        if (isGranted) {
+        if (isGranted && !_isScrollingEnabledPersisted.value) {
             startCamera()
         } else {
             // Permission denied
@@ -76,7 +76,8 @@ class MainActivity : ComponentActivity() {
         
         // Load persisted state
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        _isScrollingEnabledPersisted.value = prefs.getBoolean(KEY_ENABLED, false)
+        _isScrollingEnabledPersisted.value =
+            prefs.getBoolean(KEY_ENABLED, false) && GestureDetectionService.isRunning()
         
         // Register status callback for service updates (will be used when service starts)
         GestureDetectionService.setStatusCallback(object : GestureDetectionService.StatusCallback {
@@ -146,49 +147,44 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startCamera() {
+        if (_isScrollingEnabledPersisted.value || !isInForeground) return
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
             try {
                 cameraProvider = cameraProviderFuture.get()
-                // Ensure we unbind before binding to avoid "already bound" blinking issues
-                cameraProvider?.unbindAll()
-                bindCameraUseCases()
+                // Do not contend with the foreground camera service.
+                if (!_isScrollingEnabledPersisted.value && isInForeground) {
+                    bindCameraUseCases()
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
-    override fun onPause() {
-        super.onPause()
-        // Keep camera running for background gesture detection if scrolling is enabled
-        // On modern Android, we might need a Foreground Service to keep camera access.
-        // For now, we ensure the camera provider isn't unbinded.
-    }
-
     override fun onStart() {
         super.onStart()
         isInForeground = true
-
-        // If gesture scrolling is enabled, stop background service to avoid camera contention
-        if (_isScrollingEnabledPersisted.value) {
-            GestureDetectionService.stop(this)
+        // Never stop a running gesture service when returning to this Activity.
+        // A stale persisted flag (e.g. after process death) must not imply that
+        // a background camera service is still alive.
+        if (_isScrollingEnabledPersisted.value && !GestureDetectionService.isRunning()) {
+            _isScrollingEnabledPersisted.value = false
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_ENABLED, false).apply()
+            ScrollAccessibilityService.setEnabled(false)
+            _scrollStatus.value = "Camera service stopped. Tap Enable to restart."
         }
     }
 
     override fun onStop() {
         super.onStop()
         isInForeground = false
-
-        // Start service only when app goes to background and gesture scrolling is enabled
-        if (_isScrollingEnabledPersisted.value) {
-            try {
-                cameraProvider?.unbindAll()
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Error unbinding camera before background service", e)
-            }
-            GestureDetectionService.start(this)
+        // No background start here: camera FGS must be created while visible.
+        // The already-running service keeps the camera across apps.
+        if (!_isScrollingEnabledPersisted.value) {
+            cameraProvider?.unbindAll()
         }
     }
 
@@ -203,9 +199,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
 
-        // If gesture scrolling is enabled, we run in-foreground detection via Activity.
-        // Service will be used only when app goes to background.
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+        // The Activity must never reopen the camera while our FGS owns it.
+        if (!_isScrollingEnabledPersisted.value &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             bindCameraUseCases()
         }
     }
@@ -218,173 +214,72 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun bindCameraUseCases() {
-        val cameraProvider = cameraProvider
-        if (cameraProvider == null) {
+        // Preview-only when disabled; all active gesture detection belongs to FGS.
+        if (_isScrollingEnabledPersisted.value || !isInForeground) return
+        val provider = cameraProvider
+        if (provider == null) {
             startCamera()
             return
         }
-        val previewView = previewView ?: return
-
-        // Set resolution to a standard 4:3 or 16:9 for stability
-        val preview = Preview.Builder()
-            .setTargetResolution(android.util.Size(1280, 720))
-            .build().also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
-            }
-
-        val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-
-        // Activity always owns preview + analysis while app is open.
-        // Background service starts only when app goes to background.
-        val isServiceRunning = false
-
+        val view = previewView ?: return
         try {
-            // Only unbind if service is not running, otherwise let service handle it
-            if (!isServiceRunning) {
-                cameraProvider.unbindAll()
+            provider.unbindAll()
+            val preview = Preview.Builder().build().also {
+                it.setSurfaceProvider(view.surfaceProvider)
             }
-            
-            // Add delay to ensure camera is fully released if we just unbound
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                try {
-                    if (isServiceRunning) {
-                        // If service is running, Activity ONLY shows the preview
-                        // Don't unbind here - let service keep the camera
-                        try {
-                            cameraProvider.bindToLifecycle(
-                                this,
-                                cameraSelector,
-                                preview
-                            )
-                            android.util.Log.d("MainActivity", "Preview bound (service has analysis)")
-                        } catch (e: Exception) {
-                            // Camera might be bound by service, try again later
-                            android.util.Log.w("MainActivity", "Could not bind preview, service may have camera: ${e.message}")
-                        }
-                    } else {
-                        // If service is NOT running, Activity handles both preview and analysis
-                        val imageAnalysis = androidx.camera.core.ImageAnalysis.Builder()
-                            .setTargetResolution(android.util.Size(1280, 720))
-                            .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-
-                        setupAnalyzer(imageAnalysis)
-                        
-                        cameraProvider.bindToLifecycle(
-                            this,
-                            cameraSelector,
-                            preview,
-                            imageAnalysis
-                        )
-                        android.util.Log.d("MainActivity", "Preview and analysis bound")
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("MainActivity", "Error binding camera", e)
-                }
-            }, if (isServiceRunning) 1200 else 100) // Longer delay if service is running
+            provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
         } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "Error unbinding camera", e)
+            android.util.Log.e("MainActivity", "Failed to start idle camera preview", e)
         }
-    }
-
-    private fun setupAnalyzer(imageAnalysis: androidx.camera.core.ImageAnalysis) {
-                handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
-            if (gesture == null) {
-                // No hand detected
-                if (ScrollAccessibilityService.isEnabled()) {
-                    runOnUiThread {
-                        _scrollStatus.value = "WAITING FOR GESTURE"
-                    }
-                }
-                gestureScrollController.reset()
-                return@HandDetectionAnalyzer
-            }
-            
-            // Process gesture
-            val result = gestureScrollController.processGesture(gesture)
-            
-            when (result.action) {
-                GestureScrollController.GestureAction.SCROLL_DOWN -> {
-                    if (ScrollAccessibilityService.isEnabled() && !gestureScrollController.isPaused()) {
-                        ScrollAccessibilityService.performScroll(result.scrollAmount)
-                        runOnUiThread {
-                            _scrollStatus.value = "SCROLLING DOWN"
-                        }
-                    }
-                }
-                GestureScrollController.GestureAction.SCROLL_UP -> {
-                    if (ScrollAccessibilityService.isEnabled() && !gestureScrollController.isPaused()) {
-                        ScrollAccessibilityService.performScroll(-result.scrollAmount)
-                        runOnUiThread {
-                            _scrollStatus.value = "SCROLLING UP"
-                        }
-                    }
-                }
-                GestureScrollController.GestureAction.PAUSE -> {
-                    if (ScrollAccessibilityService.isEnabled()) {
-                        ScrollAccessibilityService.performTap()
-                    }
-                    runOnUiThread {
-                        _scrollStatus.value = "PAUSED - Separate thumb and index to resume"
-                    }
-                }
-                GestureScrollController.GestureAction.RESUME -> {
-                    if (ScrollAccessibilityService.isEnabled()) {
-                        ScrollAccessibilityService.performTap()
-                    }
-                    runOnUiThread {
-                        _scrollStatus.value = "RESUMED - Rotate/move finger angle + (up) / - (down). Pinch pauses."
-                    }
-                }
-                GestureScrollController.GestureAction.NONE -> {
-                    runOnUiThread {
-                        when {
-                            gesture.isPinching -> {
-                                _scrollStatus.value = "Gesture: ${gesture.gestureName}"
-                            }
-                            else -> {
-                                _scrollStatus.value = "Gesture: ${gesture.gestureName}"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        imageAnalysis.setAnalyzer(cameraExecutor, handDetectionAnalyzer!!)
     }
 
     private fun enableScrolling() {
-        _isScrollingEnabledPersisted.value = true
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, true).apply()
-        
-        // Ensure accessibility service is enabled
-        ScrollAccessibilityService.setEnabled(true)
-        
-        // Foreground mode: keep camera in Activity so UI keeps working.
-        // Background mode: service will start in onStop().
-        GestureDetectionService.stop(this)
-        _scrollStatus.value = if (ScrollAccessibilityService.getInstance() == null) {
-            "Accessibility Service NOT connected. Please enable it in Settings."
-        } else {
-            "Ready - Recognize hand poses and execute mapped actions."
+        // Must be invoked from the visible Activity after both permissions exist.
+        val permissions = checkAllPermissions()
+        if (!permissions.hasCamera || !permissions.hasAccessibility) {
+            _scrollStatus.value = "Grant Camera and Accessibility before enabling."
+            return
         }
-
-        bindCameraUseCases()
+        if (ScrollAccessibilityService.getInstance() == null) {
+            _scrollStatus.value = "Accessibility service is not connected yet."
+            return
+        }
+        try {
+            // Release Activity camera BEFORE creating the FGS camera owner.
+            cameraProvider?.unbindAll()
+            handDetectionAnalyzer?.release()
+            handDetectionAnalyzer = null
+            gestureScrollController.reset()
+            ScrollAccessibilityService.setEnabled(true)
+            _isScrollingEnabledPersisted.value = true
+            // The next call executes in the foreground; never from onStop/onPause.
+            GestureDetectionService.start(this)
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_ENABLED, true).apply()
+            _scrollStatus.value = "Camera service starting — you can switch to any app."
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Unable to start camera service", e)
+            _isScrollingEnabledPersisted.value = false
+            ScrollAccessibilityService.setEnabled(false)
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_ENABLED, false).apply()
+            _scrollStatus.value = "Camera service could not start: ${e.message}"
+            bindCameraUseCases()
+        }
     }
 
     private fun disableScrolling() {
         _isScrollingEnabledPersisted.value = false
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, false).apply()
-        
-        // Stop background service
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_ENABLED, false).apply()
+        ScrollAccessibilityService.setEnabled(false)
         GestureDetectionService.stop(this)
-        // Rebind camera for local preview/analyzer
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            bindCameraUseCases()
-        }, 300)
-        
         gestureScrollController.reset()
-        _scrollStatus.value = "Ready"
+        _scrollStatus.value = "Gesture service stopped."
+        // Allow the service time to release its CameraX use case.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!_isScrollingEnabledPersisted.value && isInForeground) bindCameraUseCases()
+        }, 400L)
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -444,9 +339,9 @@ fun MainScreen(
         permissions.value = checkPermissions()
     }
 
-    LaunchedEffect(permissions.value.hasCamera) {
-        if (permissions.value.hasCamera && activity != null) {
-            activity.setupPreview(previewView)
+    LaunchedEffect(permissions.value.hasCamera, isScrollingEnabledState.value) {
+        if (permissions.value.hasCamera && !isScrollingEnabledState.value) {
+            activity?.setupPreview(previewView)
         }
     }
 
@@ -464,16 +359,17 @@ fun MainScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Camera Preview
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(400.dp)
-        ) {
-            AndroidView(
-                factory = { previewView },
-                modifier = Modifier.fillMaxSize()
-            )
+        // Active camera is owned exclusively by the foreground service.
+        // Do not bind a second preview/analysis use case to the service's camera.
+        if (isScrollingEnabledState.value) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Text("Camera recognition active in foreground service. You may switch apps.\n摄像头识别服务已开启，可以切换到其他应用。",
+                    modifier = Modifier.padding(16.dp))
+            }
+        } else {
+            Box(modifier = Modifier.fillMaxWidth().height(400.dp)) {
+                AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            }
         }
 
         // Status
