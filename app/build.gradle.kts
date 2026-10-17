@@ -58,7 +58,6 @@ android {
 dependencies {
     // LiteRT 2.x CompiledModel enables Qualcomm + MediaTek NPU JIT probing.
     implementation("com.google.ai.edge.litert:litert:2.2.0")
-    implementation("com.google.ai.edge.litert:litert-gpu:2.2.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
