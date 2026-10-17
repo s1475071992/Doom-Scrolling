@@ -160,22 +160,22 @@ class GestureDetectionService : Service(), LifecycleOwner {
                                     if (ScrollAccessibilityService.isEnabled()) {
                                         ScrollAccessibilityService.performTap()
                                     }
-                                    updateStatus("RESUMED - Angle 0..+90 up, 0..-90 down")
+                                    updateStatus("RESUMED - Hand gesture detected")
                                 }
                                 GestureScrollController.GestureAction.NONE -> {
                                     when {
                                         gesture.isPinching -> {
-                                            updateStatus("PINCH - PAUSE")
+                                            updateStatus("GESTURE: ${gesture.gestureName}")
                                         }
                                         gesture.indexFingerPosition != null -> {
                                             if (gestureScrollController.isPaused()) {
                                                 updateStatus("PAUSED - Separate thumb and index to resume")
                                             } else {
-                                                updateStatus("HAND DETECTED - Angle 0..+90 up, 0..-90 down")
+                                                updateStatus("HAND DETECTED")
                                             }
                                         }
                                         else -> {
-                                            updateStatus("Angle 0..+90 up, 0..-90 down")
+                                            updateStatus("Hand gesture detected")
                                         }
                                     }
                                 }
@@ -189,7 +189,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
                         
                         isCameraBound = true
                         android.util.Log.d("GestureService", "Camera bound successfully, gesture detection started")
-                        updateStatus("Ready - Angle 0..+90 up, 0..-90 down. Pinch to pause.")
+                        updateStatus("Ready - Recognize hand poses and execute mapped actions.")
                     } catch (e: Exception) {
                         android.util.Log.e("GestureService", "Error binding camera", e)
                         updateStatus("Error: ${e.message}")

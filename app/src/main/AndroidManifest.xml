@@ -57,6 +57,10 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- Keeps original ScrollAccessibilityService and its permission configuration. -->
+        <activity android:name=".GestureMappingActivity"
+            android:exported="false"
+            android:label="Gesture mappings" />
     </application>
 
 </manifest>

@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
             _scrollStatus.value = if (ScrollAccessibilityService.getInstance() == null) {
                 "Accessibility Service NOT connected. Please enable it in Settings."
             } else {
-                "Ready - Move hand right (scroll up) or left (scroll down). Pinch to pause."
+                "Ready - Set your gesture mappings and show a hand pose."
             }
         }
 
@@ -340,10 +340,10 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
                         when {
                             gesture.isPinching -> {
-                                _scrollStatus.value = "PINCH - PAUSE"
+                                _scrollStatus.value = "Gesture: ${gesture.gestureName}"
                             }
                             else -> {
-                                _scrollStatus.value = "Angle control: 0..+90 = scroll up, 0..-90 = scroll down"
+                                _scrollStatus.value = "Gesture: ${gesture.gestureName}"
                             }
                         }
                     }
@@ -366,7 +366,7 @@ class MainActivity : ComponentActivity() {
         _scrollStatus.value = if (ScrollAccessibilityService.getInstance() == null) {
             "Accessibility Service NOT connected. Please enable it in Settings."
         } else {
-            "Ready - Angle 0..+90 up, 0..-90 down. Pinch to pause."
+            "Ready - Recognize hand poses and execute mapped actions."
         }
 
         bindCameraUseCases()
@@ -576,6 +576,12 @@ fun MainScreen(
             }
         }
 
+        // Hand pose/action configuration; Doom's accessibility permission screen is unchanged.
+        Button(
+            onClick = { context.startActivity(Intent(context, GestureMappingActivity::class.java)) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("手势映射 / Configure Gestures") }
+
         // Instructions
         Card(
             modifier = Modifier.fillMaxWidth()
@@ -589,19 +595,19 @@ fun MainScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "• Hold up your index finger in front of the front camera",
+                    text = "• Show a gesture clearly in the front camera",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• Move finger LEFT to scroll down",
+                    text = "• Map each gesture to an action using Hand Gestures",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• Move finger RIGHT to scroll up",
+                    text = "• Hold the pose for a few frames; once per held pose",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• Open 5 fingers to pause, close 5 fingers to resume",
+                    text = "• Move your hand away before repeating the same pose",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
