@@ -43,7 +43,8 @@ object GestureDiagnostics {
         val name: String = "None",
         val confidence: Float = 0f,
         val lastAction: String = "—",
-        val state: String = "IDLE"
+        val state: String = "IDLE",
+        val overlay: String = "NOT_STARTED"
     )
     private val main = Handler(Looper.getMainLooper())
     var current by mutableStateOf(Snapshot())
@@ -61,6 +62,9 @@ object GestureDiagnostics {
     }
     fun action(text: String) {
         main.post { current = current.copy(lastAction = text) }
+    }
+    fun overlay(status: String) {
+        main.post { current = current.copy(overlay = status) }
     }
     fun reset() {
         main.post { current = Snapshot() }

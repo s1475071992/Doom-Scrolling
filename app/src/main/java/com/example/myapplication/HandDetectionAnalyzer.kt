@@ -29,6 +29,7 @@ class HandDetectionAnalyzer(
         val isFourFingersOpen: Boolean,
         val isPinching: Boolean,
         val pinchDistanceSquared: Float?,
+        val pinchRatio: Float = 1f,
         val indexFingerAngleDeg: Float?,
         val indexFingerPosition: IndexFingerPosition?,
         val landmarks: List<NormalizedPoint>,
@@ -80,9 +81,10 @@ class HandDetectionAnalyzer(
     }
 
     override fun analyze(imageProxy: ImageProxy) {
-        // ~15 FPS maximum to reduce CPU use, keeping latency interactive.
+        // Air mouse targets ~30 FPS, static poses ~18 FPS.
         val now = SystemClock.uptimeMillis()
-        if (now - lastFrameAtMs < 65L || recognizer == null ||
+        val minInterval = if (GestureRuntime.airMouse) 32L else 55L
+        if (now - lastFrameAtMs < minInterval || recognizer == null ||
             !busy.compareAndSet(false, true)) {
             imageProxy.close()
             return
@@ -134,6 +136,9 @@ class HandDetectionAnalyzer(
         val dx = p[4].x - p[8].x
         val dy = p[4].y - p[8].y
         val dist2 = dx * dx + dy * dy
+        val palmWidth = kotlin.math.hypot(p[5].x - p[17].x, p[5].y - p[17].y)
+            .coerceAtLeast(.035f)
+        val pinchRatio = kotlin.math.sqrt(dist2) / palmWidth
         val angle = Math.toDegrees(atan2(
             (p[0].y - p[8].y).toDouble(),
             (p[8].x - p[0].x).toDouble()
@@ -145,6 +150,7 @@ class HandDetectionAnalyzer(
             isFourFingersOpen = false,
             isPinching = name == "OK" || dist2 < .0025f,
             pinchDistanceSquared = dist2,
+            pinchRatio = pinchRatio,
             indexFingerAngleDeg = angle,
             indexFingerPosition = IndexFingerPosition(p[8].x, p[8].y),
             landmarks = p.map { NormalizedPoint(it.x, it.y) },

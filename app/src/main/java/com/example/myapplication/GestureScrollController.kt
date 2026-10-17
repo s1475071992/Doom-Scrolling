@@ -18,6 +18,7 @@ class GestureScrollController {
     private var lastActionAt = 0L
     private var pinchSince = 0L
     private var pinchLatched = false
+    private var wasAirMouse = false
 
     private val holdMs = 230L
     private val releaseMs = 300L
@@ -25,11 +26,20 @@ class GestureScrollController {
 
     fun processGesture(gesture: HandDetectionAnalyzer.HandGesture?): GestureResult {
         val now = SystemClock.uptimeMillis()
-        if (GestureRuntime.airMouse) {
+        if (GestureRuntime.airMouse != wasAirMouse) {
+            wasAirMouse = GestureRuntime.airMouse
+            phase = Phase.IDLE
+            candidate = "None"
+            candidateSince = 0L
+            releaseSince = 0L
+            pinchSince = 0L
+            pinchLatched = false
+            if (!wasAirMouse) ScrollAccessibilityService.getInstance()?.hideCursor()
+        }
+        if (wasAirMouse) {
             processMouse(gesture, now)
             return GestureResult()
         }
-        ScrollAccessibilityService.getInstance()?.hideCursor()
         val name = if (gesture != null && gesture.confidence >= .65f)
             GestureCatalog.canonical(gesture.gestureName) else "None"
 
@@ -82,28 +92,41 @@ class GestureScrollController {
 
     private fun processMouse(gesture: HandDetectionAnalyzer.HandGesture?, now: Long) {
         GestureDiagnostics.state("AIR MOUSE")
-        // Pointer uses index tip, with front-camera mirror and smoothing in overlay.
+        val accessibility = ScrollAccessibilityService.getInstance()
+        if (accessibility == null || !ScrollAccessibilityService.isEnabled()) {
+            GestureDiagnostics.action("Accessibility not connected / 无障碍未连接")
+            return
+        }
         if (gesture == null) {
-            ScrollAccessibilityService.getInstance()?.hideCursor()
+            accessibility.hideCursor()
             pinchSince = 0L
             pinchLatched = false
             return
         }
-        val p = gesture.indexFingerPosition ?: return
-        ScrollAccessibilityService.getInstance()?.moveCursor(p.x, p.y)
-        val d2 = gesture.pinchDistanceSquared ?: 1f
-        if (d2 < .0025f) {
-            if (pinchSince == 0L) pinchSince = now
-            if (!pinchLatched && now - pinchSince >= 180L &&
-                now - lastActionAt >= 450L) {
+        val pointer = gesture.indexFingerPosition ?: return
+        // Ratio = fingertip separation / palm width, robust over camera distance.
+        val ratio = gesture.pinchRatio
+        val down = ratio < .49f
+        val released = ratio > .75f
+
+        if (released || (pinchSince == 0L && !down)) {
+            pinchSince = 0L
+            pinchLatched = false
+            accessibility.moveCursor(pointer.x, pointer.y)
+        } else if (down) {
+            if (pinchSince == 0L) {
+                pinchSince = now
+                // Initial pinch position: cursor stays here while fingers converge.
+                accessibility.moveCursor(pointer.x, pointer.y)
+            }
+            if (!pinchLatched && now - pinchSince >= 115L &&
+                now - lastActionAt >= 430L) {
                 pinchLatched = true
                 lastActionAt = now
                 GestureActionRouter.clickCursor()
             }
-        } else if (d2 > .0045f) {
-            pinchSince = 0L
-            pinchLatched = false
         }
+        // Between thresholds, preserve cursor position to avoid jitter.
     }
 
     fun reset() {

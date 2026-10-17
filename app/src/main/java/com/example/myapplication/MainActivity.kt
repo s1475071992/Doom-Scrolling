@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -323,6 +324,22 @@ fun MainScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val activity = context as? MainActivity
     val permissions = remember { mutableStateOf(checkPermissions()) }
+    val notificationGranted = remember {
+        mutableStateOf(
+            Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var notificationDenied by remember { mutableStateOf(false) }
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationGranted.value = granted
+        notificationDenied = !granted
+        if (granted) onEnableScrolling()
+    }
     val previewView = remember {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FIT_CENTER
@@ -334,6 +351,10 @@ fun MainScreen(
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 permissions.value = checkPermissions()
+                notificationGranted.value = Build.VERSION.SDK_INT < 33 ||
+                    ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -407,6 +428,17 @@ fun MainScreen(
                     "%.0f%%", snapshot.confidence * 100f))
                 Text("状态: ${snapshot.state}")
                 Text("最后动作: ${snapshot.lastAction}")
+                Text("悬浮层: ${snapshot.overlay}")
+                if (isScrollingEnabledState.value) {
+                    OutlinedButton(onClick = {
+                        val service = ScrollAccessibilityService.getInstance()
+                        if (service == null || !ScrollAccessibilityService.isEnabled()) {
+                            GestureDiagnostics.action("Accessibility service unavailable")
+                        } else {
+                            service.showGestureFeedback("✓ 跨应用悬浮提示测试")
+                        }
+                    }) { Text("测试跨应用悬浮提示") }
+                }
             }
         }
 
@@ -486,6 +518,28 @@ fun MainScreen(
             }
         }
 
+        // A camera foreground service can run without POST_NOTIFICATIONS, but its
+        // ongoing notification will not appear in the notification drawer.
+        // Require the grant before enabling because the user explicitly wants
+        // a visible persistent notification and an in-drawer stop control.
+        if (!notificationGranted.value && Build.VERSION.SDK_INT >= 33) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("需要通知权限才能在通知栏显示持续运行状态和停止按钮")
+                    OutlinedButton(onClick = {
+                        context.startActivity(Intent(
+                            Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        })
+                    }) { Text("打开应用通知设置") }
+                    if (notificationDenied) {
+                        Text("尚未授予通知权限。请在系统设置里允许通知。",
+                            color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+
         // Control Button
         if (permissions.value.hasCamera && permissions.value.hasAccessibility) {
             Button(
@@ -493,13 +547,12 @@ fun MainScreen(
                     if (isScrollingEnabledState.value) {
                         onDisableScrolling()
                     } else {
-                        // Request notification permission for Foreground Service on Android 13+
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                                (context as? androidx.activity.ComponentActivity)?.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
-                            }
+                        if (notificationGranted.value) {
+                            onEnableScrolling()
+                        } else if (Build.VERSION.SDK_INT >= 33) {
+                            // Start only after the permission result is delivered.
+                            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
-                        onEnableScrolling()
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
