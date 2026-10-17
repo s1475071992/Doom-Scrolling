@@ -41,16 +41,22 @@ object GestureActionMap {
             while (keys.hasNext()) {
                 val k = keys.next()
                 val a = o.optString(k, NONE)
-                if (a in actions) map[k] = a
+                if (a in actions) {
+                    val canonical = GestureCatalog.canonical(k)
+                    // Prefer canonical key over a legacy alias if both exist.
+                    if (canonical !in map || k == canonical) map[canonical] = a
+                }
             }
             map
         } catch (_: Exception) { mutableMapOf() }
     }
-    fun actionFor(context: Context, gesture: String): String = read(context)[gesture] ?: NONE
+    fun actionFor(context: Context, gesture: String): String =
+        read(context)[GestureCatalog.canonical(gesture)] ?: NONE
     fun save(context: Context, gesture: String, action: String) {
         require(action in actions)
         val next = read(context)
-        if (action == NONE) next.remove(gesture) else next[gesture] = action
+        val name = GestureCatalog.canonical(gesture)
+        if (action == NONE) next.remove(name) else next[name] = action
         val o = JSONObject()
         next.forEach { (key, value) -> o.put(key, value) }
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)

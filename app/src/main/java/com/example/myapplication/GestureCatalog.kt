@@ -1,23 +1,29 @@
 package com.example.myapplication
 
-/** Original GestureControl gesture keys, including aliases used by its library. */
+/** One canonical identifier for each visually distinct hand pose. */
 object GestureCatalog {
     val known = listOf(
-        "Thumb_Up", "Pointing_Up", "Thumb_Down", "Closed_Fist", "Open_Palm",
-        "Victory", "ILoveYou", "Peace", "Fist", "OK", "Shaka", "L_Shape"
+        "Thumb_Up", "Thumb_Down", "Pointing_Up", "Closed_Fist",
+        "Open_Palm", "Victory", "ILoveYou", "OK", "Shaka", "L_Shape"
     )
     val labels = mapOf(
         "Thumb_Up" to "👍 Thumbs Up",
-        "Pointing_Up" to "☝️ Pointing Up",
         "Thumb_Down" to "👎 Thumbs Down",
-        "Closed_Fist" to "✊ Closed Fist",
+        "Pointing_Up" to "☝️ Pointing Up",
+        "Closed_Fist" to "✊ Fist",
         "Open_Palm" to "🖐️ Open Palm",
-        "Victory" to "✌️ Victory",
+        "Victory" to "✌️ Peace / Victory",
         "ILoveYou" to "🤟 I Love You",
-        "Peace" to "✌️ Peace (geometry)",
-        "Fist" to "✊ Fist (geometry)",
         "OK" to "👌 OK",
         "Shaka" to "🤙 Shaka",
         "L_Shape" to "🤟 L Shape"
     )
+    /** Backwards compatibility: old mapping values are migrated to one name. */
+    fun canonical(name: String): String = when (name) {
+        "Peace" -> "Victory"
+        "Fist" -> "Closed_Fist"
+        "OpenPalm" -> "Open_Palm"
+        "Thumbs_Up" -> "Thumb_Up"
+        else -> name
+    }
 }

@@ -14,6 +14,17 @@ class ScrollAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var isEnabled = false
+    private val hud by lazy { AccessibilityHud(this) }
+
+    fun showGestureFeedback(message: String) {
+        if (isEnabled && GestureRuntime.feedback) hud.message(message)
+    }
+    fun moveCursor(x: Float, y: Float) {
+        if (isEnabled) hud.move(x, y)
+    }
+    fun hideCursor() { hud.hideCursor() }
+    fun clickCursor() { if (isEnabled) hud.click() }
+
 
     companion object {
         private var instance: ScrollAccessibilityService? = null
@@ -79,6 +90,7 @@ class ScrollAccessibilityService : AccessibilityService() {
             android.util.Log.d("ScrollService", "Static setEnabled: $enabled")
             this.enabled = enabled
             instance?.isEnabled = enabled
+            if (!enabled) instance?.hideCursor()
         }
 
         fun isEnabled(): Boolean = enabled
@@ -92,6 +104,7 @@ class ScrollAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        hud.clear()
         super.onDestroy()
         instance = null
     }

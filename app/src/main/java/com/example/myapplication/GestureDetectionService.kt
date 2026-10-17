@@ -34,6 +34,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
     companion object {
         private const val CHANNEL_ID = "GestureDetectionChannel"
         private const val NOTIFICATION_ID = 1
+        private const val ACTION_STOP = "com.example.myapplication.STOP_CAMERA_FGS"
         @Volatile private var instance: GestureDetectionService? = null
         @Volatile private var active = false
 
@@ -79,6 +80,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
 
     override fun onCreate() {
         super.onCreate()
+        GestureRuntime.init(this)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         cameraExecutor = Executors.newSingleThreadExecutor()
         createNotificationChannel()
@@ -86,6 +88,10 @@ class GestureDetectionService : Service(), LifecycleOwner {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
         if (active) return START_NOT_STICKY
@@ -110,16 +116,13 @@ class GestureDetectionService : Service(), LifecycleOwner {
                 provider.unbindAll()
                 handDetectionAnalyzer?.release()
                 handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
-                    if (gesture == null) {
-                        gestureScrollController.processGesture(null)
-                        updateStatus("WAITING FOR GESTURE")
-                    } else {
-                        gestureScrollController.processGesture(gesture)
-                        updateStatus("GESTURE: ${gesture.gestureName}")
-                    }
+                    gestureScrollController.processGesture(gesture)
+                    updateStatus(if (gesture == null) "WAITING FOR GESTURE"
+                        else "GESTURE: ${gesture.gestureName}")
                 }
                 val analysis = ImageAnalysis.Builder()
-                    .setTargetResolution(android.util.Size(1280, 720))
+                    .setTargetResolution(android.util.Size(640, 480))
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                 analysis.setAnalyzer(cameraExecutor, handDetectionAnalyzer!!)
@@ -141,11 +144,19 @@ class GestureDetectionService : Service(), LifecycleOwner {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        val stopIntent = Intent(this, GestureDetectionService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 2, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Scrollable Background Active")
-            .setContentText("Gesture detection is running in the background.")
+            .setContentTitle("隔空手势运行中 · Air Gestures")
+            .setContentText("前置摄像头正在识别手势 · 点击进入设置")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(pendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止手势", stopPendingIntent)
             .setOngoing(true)
             .setShowWhen(false)
             .setSilent(true)
@@ -174,6 +185,9 @@ class GestureDetectionService : Service(), LifecycleOwner {
     override fun onDestroy() {
         active = false
         ScrollAccessibilityService.setEnabled(false)
+        GestureDiagnostics.reset()
+        getSharedPreferences("ScrollablePrefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("gesture_scrolling_enabled", false).apply()
         super.onDestroy()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         

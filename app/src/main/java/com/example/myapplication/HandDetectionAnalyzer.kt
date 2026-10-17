@@ -38,6 +38,11 @@ class HandDetectionAnalyzer(
 
     private val busy = AtomicBoolean(false)
     private var lastTimeMs = 0L
+    private var lastFrameAtMs = 0L
+    private var fpsWindowStart = 0L
+    private var frameCount = 0
+    private var measuredFps = 0f
+    private var lastDiagnosticsAt = 0L
     private val custom = OptionalCustomGestureModel(context)
     private var recognizer: GestureRecognizer? = null
 
@@ -75,13 +80,17 @@ class HandDetectionAnalyzer(
     }
 
     override fun analyze(imageProxy: ImageProxy) {
-        if (recognizer == null || !busy.compareAndSet(false, true)) {
+        // ~15 FPS maximum to reduce CPU use, keeping latency interactive.
+        val now = SystemClock.uptimeMillis()
+        if (now - lastFrameAtMs < 65L || recognizer == null ||
+            !busy.compareAndSet(false, true)) {
             imageProxy.close()
             return
         }
+        lastFrameAtMs = now
         try {
-            // Doom's original YUV_420_888 to Bitmap converter handles rotation.
-            val image = BitmapImageBuilder(imageProxy.toBitmap()).build()
+            // Prefer packed CameraX RGBA data: no JPEG encode/decode.
+            val image = BitmapImageBuilder(imageProxy.toOptimizedBitmap()).build()
             val timestamp = maxOf(SystemClock.uptimeMillis(), lastTimeMs + 1L)
             lastTimeMs = timestamp
             recognizer!!.recognizeAsync(image, timestamp)
@@ -96,6 +105,8 @@ class HandDetectionAnalyzer(
     private fun handle(result: GestureRecognizerResult) {
         val hand = result.landmarks().firstOrNull()
         if (hand == null || hand.size != 21) {
+            val now = SystemClock.uptimeMillis()
+            recordFrame(now, "None", 0f)
             onHandsDetected(null)
             return
         }
@@ -106,12 +117,19 @@ class HandDetectionAnalyzer(
 
         // Use MediaPipe's original seven categories first. Only fall back
         // to user model and geometric shapes when no strong native match.
-        val fallback = if (modelName == "None" || modelConfidence < .55f) {
-            custom.predict(p) ?: GestureGeometry.recognize(p)
-        } else null
-        val name = fallback?.first ?:
-            if (modelConfidence >= .55f) modelName else "None"
-        val confidence = fallback?.second ?: modelConfidence
+        // Custom-trained gestures take priority when extremely confident.
+        // Native recognition covers seven canonical labels; rule-based geometry
+        // handles only three extra shapes and NEVER duplicates the native poses.
+        val customResult = custom.predict(p)
+        val nativeName = GestureCatalog.canonical(modelName)
+        val nativeMatch = modelConfidence >= .62f && nativeName in GestureCatalog.known
+        val geometry = if (customResult == null && !nativeMatch)
+            GestureGeometry.recognize(p) else null
+        val final = customResult ?: if (nativeMatch) nativeName to modelConfidence
+                    else geometry ?: ("None" to 0f)
+        val name = GestureCatalog.canonical(final.first)
+        val confidence = final.second
+        recordFrame(SystemClock.uptimeMillis(), name, confidence)
 
         val dx = p[4].x - p[8].x
         val dy = p[4].y - p[8].y
@@ -133,6 +151,20 @@ class HandDetectionAnalyzer(
             gestureName = name,
             confidence = confidence
         ))
+    }
+
+    private fun recordFrame(now: Long, name: String, confidence: Float) {
+        if (fpsWindowStart == 0L) fpsWindowStart = now
+        frameCount++
+        if (now - fpsWindowStart >= 1000L) {
+            measuredFps = frameCount * 1000f / (now - fpsWindowStart)
+            frameCount = 0
+            fpsWindowStart = now
+        }
+        if (now - lastDiagnosticsAt >= 220L) {
+            lastDiagnosticsAt = now
+            GestureDiagnostics.recognition(measuredFps, name, confidence)
+        }
     }
 
     fun release() {
