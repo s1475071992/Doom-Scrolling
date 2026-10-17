@@ -34,6 +34,8 @@ class NpuHandPipeline private constructor(
     }
     private val palmBmp = Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_8888)
     private val handBmp = Bitmap.createBitmap(224, 224, Bitmap.Config.ARGB_8888)
+    private val palmCanvas = Canvas(palmBmp)
+    private val handCanvas = Canvas(handBmp)
     private val palmPixels = IntArray(192 * 192)
     private val handPixels = IntArray(224 * 224)
     private val palmInput = FloatArray(192 * 192 * 3)
@@ -91,9 +93,8 @@ class NpuHandPipeline private constructor(
         val hh = frame.height * scale
         val offX = (192 - ww) * .5f
         val offY = (192 - hh) * .5f
-        val c = Canvas(palmBmp)
-        c.drawColor(Color.BLACK)
-        c.drawBitmap(frame, null, RectF(offX, offY, offX + ww, offY + hh), paint)
+        palmCanvas.drawColor(Color.BLACK)
+        palmCanvas.drawBitmap(frame, null, RectF(offX, offY, offX + ww, offY + hh), paint)
         palmBmp.getPixels(palmPixels, 0, 192, 0, 0, 192, 192)
         fillRgb(palmPixels, palmInput)
         val out = palm.runPreprocessedFloat(palmInput)
@@ -130,7 +131,7 @@ class NpuHandPipeline private constructor(
     }
 
     private fun runHand(frame: Bitmap, roi: Roi): List<Point>? {
-        val canvas = Canvas(handBmp)
+        val canvas = handCanvas
         canvas.drawColor(Color.BLACK)
         canvas.save()
         canvas.translate(112f, 112f)

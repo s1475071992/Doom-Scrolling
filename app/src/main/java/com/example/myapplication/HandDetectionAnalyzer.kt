@@ -49,6 +49,7 @@ class HandDetectionAnalyzer(
     private var lastDiagnosticsAt = 0L
     private var lastBatterySampleAt = 0L
     private var lastNpuMetricsAt = 0L
+    private val frameConverter = ReusableFrameConverter()
     private var recognizer: GestureRecognizer? = null
     private var npuPipeline: NpuHandPipeline? = null
     @Volatile private var activeBackend: InferenceBackend? = null
@@ -65,40 +66,45 @@ class HandDetectionAnalyzer(
         // The caller constructs this analyzer on cameraExecutor, NOT the
         // Android main thread. MediaPipe GPU's EGL context must be created
         // and used on the same single-thread executor.
-        if (GestureRuntime.experimentalNpu && GestureRuntime.accelerationMode == AccelerationMode.AUTO) {
+        // AUTO always attempts NPU first, but never equates an NPU request
+        // with verified HTP/APU dispatch. Unsupported vendor models fall back.
+        for (backend in AccelerationPolicy.candidates(GestureRuntime.accelerationMode)) {
             try {
-                npuPipeline = NpuHandPipeline.create(context)
-                if (npuPipeline != null) {
-                    activeBackend = InferenceBackend.NPU
-                    GestureDiagnostics.backend("NPU 实验路径 · LiteRT 请求 NPU")
-                    GestureDiagnostics.assignmentEvidence(
-                        "未验证：LiteRT 允许 CPU 部分或全部回退；需 QNN/HTP / MediaTek APU trace"
-                    )
-                    GestureDiagnostics.npuModels("两模型已初始化，尚未开始执行")
+                when (backend) {
+                    InferenceBackend.NPU -> {
+                        npuPipeline = NpuHandPipeline.create(context)
+                        if (npuPipeline == null) {
+                            Log.i("HandDetection", "NPU unavailable; trying GPU")
+                            continue
+                        }
+                        activeBackend = InferenceBackend.NPU
+                        GestureDiagnostics.backend("NPU · LiteRT 请求 NPU（硬件执行未验证）")
+                        GestureDiagnostics.assignmentEvidence(
+                            "NPU 分区未验证；LiteRT 可能部分或全部 CPU 回退"
+                        )
+                        GestureDiagnostics.npuModels("两模型已初始化，尚未开始执行")
+                    }
+                    InferenceBackend.GPU, InferenceBackend.CPU -> {
+                        recognizer = createRecognizer(backend)
+                        activeBackend = backend
+                        GestureDiagnostics.backend(
+                            if (backend == InferenceBackend.GPU) "GPU · MediaPipe"
+                            else "CPU · MediaPipe（兼容/回退）"
+                        )
+                        GestureDiagnostics.assignmentEvidence(
+                            if (backend == InferenceBackend.GPU)
+                                "MediaPipe GPU Delegate 已创建；逐算子分配不可读取"
+                            else "MediaPipe CPU Delegate 已创建"
+                        )
+                    }
                 }
-            } catch (e: Exception) {
-                Log.w("HandDetection", "Experimental NPU pipeline unavailable", e)
-            }
-        }
-        if (npuPipeline == null) for (backend in AccelerationPolicy.candidates(GestureRuntime.accelerationMode)) {
-            if (backend == InferenceBackend.NPU) {
-                // Not installed: never claim NPU acceleration from SoC name.
-                continue
-            }
-            try {
-                recognizer = createRecognizer(backend)
-                activeBackend = backend
-                GestureDiagnostics.backend(
-                    if (backend == InferenceBackend.GPU) "GPU · MediaPipe"
-                    else "CPU · MediaPipe（兼容/回退）"
-                )
-                GestureDiagnostics.assignmentEvidence(
-                    if (backend == InferenceBackend.GPU) "MediaPipe GPU Delegate 已创建；逐算子分配不可读取"
-                    else "MediaPipe CPU Delegate 已创建"
-                )
                 break
             } catch (e: Exception) {
-                Log.w("HandDetection", "$backend initialization failed", e)
+                Log.w("HandDetection", "$backend initialization failed; trying fallback", e)
+                GestureDiagnostics.fallbackReason("$backend 初始化失败：${e.javaClass.simpleName}")
+            } catch (e: LinkageError) {
+                Log.w("HandDetection", "$backend native runtime missing; trying fallback", e)
+                GestureDiagnostics.fallbackReason("$backend 原生运行库不可用：${e.javaClass.simpleName}")
             }
         }
         if (recognizer == null && npuPipeline == null) {
@@ -229,7 +235,9 @@ class HandDetectionAnalyzer(
         }
         lastFrameAtMs = now
         try {
-            val bitmap = imageProxy.toOptimizedBitmap()
+            // Only convert frames selected by cadence/backpressure.
+            // The busy gate prevents reusing the cached Bitmap before MPImage.close().
+            val bitmap = frameConverter.convert(imageProxy)
             val pipeline = npuPipeline
             if (pipeline != null) {
                 // NPU path runs both networks synchronously on cameraExecutor.
@@ -260,7 +268,12 @@ class HandDetectionAnalyzer(
                 val image = BitmapImageBuilder(bitmap).build()
                 val timestamp = maxOf(SystemClock.uptimeMillis(), lastTimeMs + 1L)
                 lastTimeMs = timestamp
-                recognizer!!.recognizeAsync(image, timestamp)
+                try {
+                    recognizer!!.recognizeAsync(image, timestamp)
+                } catch (e: Exception) {
+                    image.close()
+                    throw e
+                }
             }
         } catch (e: Exception) {
             Log.e("HandDetection", "Frame analysis failed", e)
@@ -341,5 +354,6 @@ class HandDetectionAnalyzer(
         npuPipeline = null
         activeBackend = null
         busy.set(false)
+        frameConverter.close()
     }
 }

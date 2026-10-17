@@ -119,8 +119,10 @@ class GestureDetectionService : Service(), LifecycleOwner {
                 // creation/method calls move to the single analysis executor.
                 provider.unbindAll()
                 val builder = ImageAnalysis.Builder()
-                    .setTargetResolution(android.util.Size(640, 480))
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .setTargetResolution(android.util.Size(480, 360))
+                    // Keep camera output in YUV; convert only a frame chosen for inference.
+                    // Avoid CameraX RGBA conversion on frames dropped by 1 FPS standby.
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 // Measures real Camera2 captured frames independently of model
                 // inference, including those dropped by the analyzer.

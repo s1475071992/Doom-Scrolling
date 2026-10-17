@@ -383,7 +383,7 @@ fun MainScreen(
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("智能省电")
-                Text("等待起手式：AI 推理约 1 FPS，并请求摄像头最低支持帧率；起手式确认／空鼠自动恢复高帧率。实际摄像头 FPS 取决于驱动，在实时调试中显示。",
+                Text("等待起手式：AI 推理约 1 FPS，并请求摄像头最低支持帧率；起手式确认／空鼠自动恢复高帧率。摄像头使用 YUV，只有选中推理帧才转 RGB；实际采集 FPS 取决于驱动。",
                     style = MaterialTheme.typography.bodySmall)
             }
             Switch(checked = powerSavingEnabled, onCheckedChange = {
@@ -417,22 +417,9 @@ fun MainScreen(
                         Text(mode.title, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
-                var npuPreview by remember { mutableStateOf(GestureRuntime.experimentalNpu) }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("实验性双 NPU 流水线")
-                        Text("允许请求 MediaTek／Qualcomm NPU 执行掌心检测和手部关键点。未做真机委托验证，请先保留关闭。",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    Switch(checked = npuPreview, onCheckedChange = {
-                        npuPreview = it
-                        GestureRuntime.setExperimentalNpu(context, it)
-                    })
-                }
                 Text(
-                    if (npuPreview)
-                        "NPU 实验开启：自动模式尝试两个 NPU 子模型，出错回退 GPU → CPU；界面不会声称已证明硬件执行。"
-                    else "NPU 实验关闭：自动模式目前使用 GPU → CPU。",
+                    "自动模式默认依次尝试 NPU → GPU → CPU；不可用或运行失败自动降级。" +
+                        "NPU 仅代表 LiteRT 请求，芯片实际算子分配尚未经真机验证。",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
