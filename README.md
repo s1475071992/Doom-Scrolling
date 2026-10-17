@@ -9,13 +9,13 @@
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-Compose-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![构建状态](https://github.com/s1475071992/Doom-Scrolling/actions/workflows/android-debug.yml/badge.svg)](https://github.com/s1475071992/Doom-Scrolling/actions/workflows/android-debug.yml)
-[![公开下载](https://img.shields.io/badge/下载-v1.9.0--rc.1-0969da?logo=github)](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.9.0-rc.1)
+[![公开下载](https://img.shields.io/badge/下载-v1.10.0-0969da?logo=github)](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.10.0)
 
-### [⬇️ 获取 Android APK](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.9.0-rc.1) · [📖 使用指南](#使用方法) · [🐛 反馈问题](https://github.com/s1475071992/Doom-Scrolling/issues)
+### [⬇️ 获取 Android APK](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.10.0) · [📖 使用指南](#使用方法) · [🐛 反馈问题](https://github.com/s1475071992/Doom-Scrolling/issues)
 
 </div>
 
-> **发行说明：** 当前公开版本为 `v1.9.0-rc.1` 候选版。自动构建使用临时调试签名，各次构建之间可能无法直接覆盖安装；这不是已经配置永久发布签名的商店发行包。安装与签名限制见下文。
+> **v1.10.0 发布说明：** 此版本以公开正式 GitHub Release 形式发布，但 APK 仍使用 GitHub Actions 临时调试密钥签名，**不是永久发布密钥签名的商店版**，后续自动覆盖升级不保证成功。NPU 路径属于按需尝试的可降级加速功能，硬件算子归属与各型号手势精度未通过完整真机认证。
 
 ## 功能
 
@@ -25,7 +25,8 @@
 - **跨应用轻量提示**：起手式仅显示 ✊、☝️ 或 ✌️，触发时显示简短中文动作名称。
 - **可自定义映射**：六种动态动作可分别关联系统操作。
 - **后台持续识别**：使用可见的前台摄像头服务通知，带「停止手势」按钮；不会尝试隐藏摄像头使用状态。
-- **智能省电（默认开启）**：普通手势约 15 帧/秒、无手约 8 帧/秒，空鼠约 25 帧/秒；可切换响应优先模式。关闭识别后不保留空闲相机预览；开启摄像头时仍会耗电。
+- **智能省电（默认开启）**：等待起手式时 AI 推理约 1 FPS，并请求摄像头驱动允许的最低采集档；确认起手式和空鼠使用更高推理速度。YUV 图像仅对被选中推理的帧做 RGB 转换；相机传感器在服务运行时仍可能持续采集。
+- **AI 加速模式**：自动按 NPU → GPU → CPU 尝试，失败自动降级，也支持 GPU 优先或 CPU 兼容模式；NPU 仅代表 LiteRT 请求，不证明所有算子都在 NPU 运行。
 - **本机处理**：图像仅用于本地实时识别，应用本身不请求网络权限；没有广告或云端识别功能。
 
 ## 手势速查
@@ -43,7 +44,7 @@
 
 ## 使用方法
 
-1. 在 [Releases 页面](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.9.0-rc.1) 下载 `Doom-Scrolling-v1.9.0-rc.1-debug.apk`。可使用同页 `SHA256SUMS.txt` 校验文件完整性。
+1. 在 [Releases 页面](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.10.0) 下载 `Doom-Scrolling-v1.10.0-release.apk`。可使用同页 `SHA256SUMS.txt` 校验文件完整性。此 APK 使用临时调试密钥签名。
 2. 安装后开启**相机权限**与**通知权限**（Android 13 及以上）。
 3. 按应用提示打开 Android 系统**无障碍设置**，启用「隔空手势」服务。
 4. 返回应用，点击**开启手势识别**，确认通知栏出现运行中的常驻通知。
@@ -56,13 +57,13 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 公开发行页 | [v1.9.0-rc.1](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.9.0-rc.1) |
-| APK | `Doom-Scrolling-v1.9.0-rc.1-debug.apk` |
+| 公开发行页 | [v1.10.0](https://github.com/s1475071992/Doom-Scrolling/releases/tag/v1.10.0) |
+| APK | `Doom-Scrolling-v1.10.0-release.apk`（临时调试密钥签名） |
 | SHA-256 | 从 Release 附件 `SHA256SUMS.txt` 查看 |
 | 代码与自动测试 | [GitHub Actions](https://github.com/s1475071992/Doom-Scrolling/actions) |
 | 稳定签名 | **尚未配置**；后续若要提供免卸载升级，需由仓库所有者安全配置固定的签名密钥 |
 
-如果安装时出现「签名不一致」，这是因为不同 CI 运行使用了不同的调试签名。先备份个人映射设置，再卸载旧的候选包并安装新版本；**请勿为了绕过签名错误关闭 Android 系统安全保护**。
+v1.9 的 debug 包使用 `.debug` 包名，与 v1.10 的 release 构建包名不同，可共存但不继承应用内数据。如果安装时出现「签名不一致」，可能是现有包使用了不同签名。请先自行备份设置，再按需卸载旧包并安装新版本；**请勿为了绕过签名错误关闭 Android 系统安全保护**。
 
 仓库内历史遗留的 `app-release.apk` **不是最新发布包**，请始终从上面的 Release 页面下载；不要依赖其他项目的下载链接。
 

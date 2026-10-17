@@ -400,7 +400,7 @@ fun MainScreen(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("AI 加速模式 · 实验版",
+                Text("AI 加速模式",
                     style = MaterialTheme.typography.titleMedium)
                 for (mode in AccelerationMode.entries) {
                     Row(
