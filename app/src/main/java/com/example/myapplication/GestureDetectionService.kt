@@ -34,7 +34,10 @@ class GestureDetectionService : Service(), LifecycleOwner {
     companion object {
         private const val CHANNEL_ID = "GestureDetectionChannel"
         private const val NOTIFICATION_ID = 1
-        private var instance: GestureDetectionService? = null
+        @Volatile private var instance: GestureDetectionService? = null
+        @Volatile private var active = false
+
+        fun isRunning(): Boolean = active && instance != null
         private var statusCallback: StatusCallback? = null
 
         private const val STATUS_THROTTLE_MS = 200L
@@ -85,119 +88,48 @@ class GestureDetectionService : Service(), LifecycleOwner {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
+        if (active) return START_NOT_STICKY
+        active = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         android.util.Log.d("GestureService", "Service started, callback set: ${statusCallback != null}")
         updateStatus("Service starting...")
         startBackgroundDetection()
-        return START_STICKY
+        // Do not restart a camera FGS from an invisible process.
+        // User re-enables it explicitly from the visible Activity after a crash/reboot.
+        return START_NOT_STICKY
     }
 
     private fun startBackgroundDetection() {
-        // Don't start if already bound
-        if (isCameraBound) {
-            android.util.Log.d("GestureService", "Camera already bound, skipping")
-            return
-        }
-        
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            if (!active || instance !== this) return@addListener
             try {
-                cameraProvider = cameraProviderFuture.get()
-                // Add a longer delay to ensure MainActivity releases camera first
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    try {
-                        if (isCameraBound) {
-                            android.util.Log.d("GestureService", "Camera already bound, skipping")
-                            return@postDelayed
-                        }
-                        
-                        cameraProvider?.unbindAll()
-
-                        val imageAnalysis = ImageAnalysis.Builder()
-                            .setTargetResolution(android.util.Size(1280, 720))
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-
-                        handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
-                            if (gesture == null) {
-                                // No hand detected
-                                if (ScrollAccessibilityService.isEnabled()) {
-                                    updateStatus("WAITING FOR GESTURE")
-                                }
-                                gestureScrollController.reset()
-                                return@HandDetectionAnalyzer
-                            }
-                            
-                            // Process gesture
-                            val result = gestureScrollController.processGesture(gesture)
-                            
-                            when (result.action) {
-                                GestureScrollController.GestureAction.SCROLL_DOWN -> {
-                                    if (ScrollAccessibilityService.isEnabled() && !gestureScrollController.isPaused()) {
-                                        android.util.Log.d("GestureService", "Sending SCROLL_DOWN to AccessibilityService")
-                                        ScrollAccessibilityService.performScroll(result.scrollAmount)
-                                        updateStatus("SCROLLING DOWN")
-                                    } else {
-                                        android.util.Log.d("GestureService", "SCROLL_DOWN skipped: enabled=${ScrollAccessibilityService.isEnabled()}, paused=${gestureScrollController.isPaused()}")
-                                    }
-                                }
-                                GestureScrollController.GestureAction.SCROLL_UP -> {
-                                    if (ScrollAccessibilityService.isEnabled() && !gestureScrollController.isPaused()) {
-                                        android.util.Log.d("GestureService", "Sending SCROLL_UP to AccessibilityService")
-                                        ScrollAccessibilityService.performScroll(-result.scrollAmount)
-                                        updateStatus("SCROLLING UP")
-                                    } else {
-                                        android.util.Log.d("GestureService", "SCROLL_UP skipped: enabled=${ScrollAccessibilityService.isEnabled()}, paused=${gestureScrollController.isPaused()}")
-                                    }
-                                }
-                                GestureScrollController.GestureAction.PAUSE -> {
-                                    if (ScrollAccessibilityService.isEnabled()) {
-                                        ScrollAccessibilityService.performTap()
-                                    }
-                                    updateStatus("PAUSED - Separate thumb and index to resume")
-                                }
-                                GestureScrollController.GestureAction.RESUME -> {
-                                    if (ScrollAccessibilityService.isEnabled()) {
-                                        ScrollAccessibilityService.performTap()
-                                    }
-                                    updateStatus("RESUMED - Hand gesture detected")
-                                }
-                                GestureScrollController.GestureAction.NONE -> {
-                                    when {
-                                        gesture.isPinching -> {
-                                            updateStatus("GESTURE: ${gesture.gestureName}")
-                                        }
-                                        gesture.indexFingerPosition != null -> {
-                                            if (gestureScrollController.isPaused()) {
-                                                updateStatus("PAUSED - Separate thumb and index to resume")
-                                            } else {
-                                                updateStatus("HAND DETECTED")
-                                            }
-                                        }
-                                        else -> {
-                                            updateStatus("Hand gesture detected")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        imageAnalysis.setAnalyzer(cameraExecutor, handDetectionAnalyzer!!)
-
-                        val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-                        cameraProvider?.bindToLifecycle(this, cameraSelector, imageAnalysis)
-                        
-                        isCameraBound = true
-                        android.util.Log.d("GestureService", "Camera bound successfully, gesture detection started")
-                        updateStatus("Ready - Recognize hand poses and execute mapped actions.")
-                    } catch (e: Exception) {
-                        android.util.Log.e("GestureService", "Error binding camera", e)
-                        updateStatus("Error: ${e.message}")
-                        isCameraBound = false
+                val provider = future.get()
+                cameraProvider = provider
+                // Activity releases its preview when Enable is tapped.
+                provider.unbindAll()
+                handDetectionAnalyzer?.release()
+                handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
+                    if (gesture == null) {
+                        gestureScrollController.processGesture(null)
+                        updateStatus("WAITING FOR GESTURE")
+                    } else {
+                        gestureScrollController.processGesture(gesture)
+                        updateStatus("GESTURE: ${gesture.gestureName}")
                     }
-                }, 1000) // Longer delay to ensure MainActivity releases camera
+                }
+                val analysis = ImageAnalysis.Builder()
+                    .setTargetResolution(android.util.Size(1280, 720))
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                analysis.setAnalyzer(cameraExecutor, handDetectionAnalyzer!!)
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
+                isCameraBound = true
+                updateStatus("Camera active — gestures work when switching apps.")
             } catch (e: Exception) {
-                android.util.Log.e("GestureService", "Error getting camera provider", e)
+                android.util.Log.e("GestureService", "Camera binding failed", e)
+                updateStatus("Camera error: ${e.message}")
+                stopSelf()
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -217,7 +149,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
             .setOngoing(true)
             .setShowWhen(false)
             .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
 
@@ -226,7 +158,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
                 "Gesture Detection Service Channel",
-                NotificationManager.IMPORTANCE_MIN
+                NotificationManager.IMPORTANCE_LOW
             )
             serviceChannel.setShowBadge(false)
             serviceChannel.enableVibration(false)
@@ -240,6 +172,8 @@ class GestureDetectionService : Service(), LifecycleOwner {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        active = false
+        ScrollAccessibilityService.setEnabled(false)
         super.onDestroy()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         
