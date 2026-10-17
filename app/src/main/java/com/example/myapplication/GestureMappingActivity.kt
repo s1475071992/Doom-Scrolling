@@ -22,7 +22,7 @@ class GestureMappingActivity : ComponentActivity() {
                     Column(Modifier.fillMaxSize().padding(insets).padding(16.dp)) {
                         Text("动作手势映射",
                             style = MaterialTheme.typography.headlineSmall)
-                        Text("先做出下方规定的起手式，识别到后会显示悬浮提醒；完成方向动作才执行操作。",
+                        Text("上翻统一从握拳起手；下翻从伸直手指起手；捏合在任意位置开始，移动方向决定对应操作。",
                             style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(12.dp))
                         val names = remember {
