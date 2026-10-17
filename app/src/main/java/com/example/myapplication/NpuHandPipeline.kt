@@ -70,7 +70,7 @@ class NpuHandPipeline private constructor(
         val p = output
         val wrist = p[0]
         val middle = p[9]
-        val angle = (PI.toFloat() / 2f) - atan2(middle.y - wrist.y, middle.x - wrist.x)
+        val angle = (PI.toFloat() / 2f) - atan2(wrist.y - middle.y, middle.x - wrist.x)
         val xMin = p.minOf { it.x }; val xMax = p.maxOf { it.x }
         val yMin = p.minOf { it.y }; val yMax = p.maxOf { it.y }
         val side = (max((xMax - xMin) * frame.width, (yMax - yMin) * frame.height)
@@ -116,7 +116,7 @@ class NpuHandPipeline private constructor(
         val wristY = imageY(5)
         val middleX = imageX(8)
         val middleY = imageY(9)
-        val theta = PI.toFloat() / 2f - atan2(middleY - wristY, middleX - wristX)
+        val theta = PI.toFloat() / 2f - atan2(wristY - middleY, middleX - wristX)
         val side = (max(width, height) * 2.6f).coerceAtLeast(64f)
         // DetectionToRect/RectTransformation center is shifted towards fingers.
         val roiX = (wristX + middleX) * .5f
