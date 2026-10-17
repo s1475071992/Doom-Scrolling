@@ -32,8 +32,8 @@ object GestureActionRouter {
                 "$description：未设置动作" else "$description → ${GestureActionMap.label(action)}")
             // Show feedback for recognised but UNMAPPED gestures too, so the
             // user can determine whether recognition or mapping is at fault.
-            service.showGestureFeedback(if (action == GestureActionMap.NONE)
-                "$description：未设置动作" else "$description → ${GestureActionMap.label(action)}")
+            // 完成动作才提示；悬浮层只显示动作中文名称，不再附长说明。
+            if (action != GestureActionMap.NONE) service.showGestureFeedback(description)
             when (action) {
                 GestureActionMap.NONE -> Unit
                 GestureActionMap.SCROLL_DOWN -> ScrollAccessibilityService.performScroll(850)

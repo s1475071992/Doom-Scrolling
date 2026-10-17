@@ -26,7 +26,9 @@ class DynamicFingerDetector(
     private enum class Start { FIST, INDEX_DOWN, TWO_MOVE }
     private data class Frame(
         val index: Float, val middle: Float, val ring: Float, val little: Float,
-        val x: Float, val y: Float, val palmWidth: Float
+        val x: Float, val y: Float, val palmWidth: Float,
+        val indexForward: Boolean, val middleForward: Boolean,
+        val ringForward: Boolean, val littleForward: Boolean
     )
 
     private var phase = Phase.IDLE
@@ -41,10 +43,14 @@ class DynamicFingerDetector(
     private var candidateKey: String? = null
     private var candidateAt = 0L
     private var candidateFrames = 0
+    private var smoothedX = 0f
+    private var smoothedY = 0f
+    private var motionPath = 0f
+    private var lostTwoFrames = 0
 
     private val settleMs = 440L
     private val stableFrameCount = 5
-    private val moveThreshold = .60f // 掌宽归一化，拒绝轻微晃动
+    private val moveThreshold = .55f // 平滑后需要明确的整掌位移
 
     private fun distance(a: P, b: P) = hypot(a.x-b.x, a.y-b.y)
 
@@ -67,8 +73,28 @@ class DynamicFingerDetector(
             .52f*(projected/1.30f).coerceIn(0f,1f)
     }
 
+    /**
+     * MediaPipe z 是相对手腕的归一化深度。双指朝向镜头时二维投影变短，
+     * 用 3D PIP 关节直线程度 + 指尖深度变化补救，而非要求指尖必须指向画面上方。
+     */
+    private fun spatialDistance(a:P,b:P):Float {
+        val dx=a.x-b.x; val dy=a.y-b.y; val dz=a.z-b.z
+        return kotlin.math.sqrt(dx*dx+dy*dy+dz*dz)
+    }
+    private fun forwardExtended(p:List<P>,mcp:Int,pip:Int,tip:Int,width:Float):Boolean {
+        val depth=kotlin.math.abs(p[tip].z-p[mcp].z)/width
+        val a=spatialDistance(p[mcp],p[pip])
+        val b=spatialDistance(p[pip],p[tip])
+        val straightness=spatialDistance(p[mcp],p[tip])/(a+b).coerceAtLeast(.0001f)
+        // 不限制 z 的正负：手心和手背朝镜头时都可能出现相反的深度方向。
+        return depth>.40f && straightness>.88f
+    }
+
     private fun frame(p:List<P>):Frame {
-        val width=distance(p[5],p[17]).coerceAtLeast(.045f)
+        val span=distance(p[5],p[17])
+        val wristToKnuckle=distance(p[0],p[9])
+        // 手掌转向镜头时横向掌宽会缩短；增加腕->掌骨长度下限。
+        val width=kotlin.math.max(span,wristToKnuckle*.72f).coerceAtLeast(.07f)
         val palmIndices=intArrayOf(0,5,9,13,17)
         val centerX=palmIndices.sumOf { p[it].x.toDouble() }.toFloat()/5f
         val centerY=palmIndices.sumOf { p[it].y.toDouble() }.toFloat()/5f
@@ -77,18 +103,25 @@ class DynamicFingerDetector(
             extension(p,9,10,12,width),
             extension(p,13,14,16,width),
             extension(p,17,18,20,width),
-            centerX,centerY,width
+            centerX,centerY,width,
+            forwardExtended(p,5,6,8,width),
+            forwardExtended(p,9,10,12,width),
+            forwardExtended(p,13,14,16,width),
+            forwardExtended(p,17,18,20,width)
         )
     }
 
     private fun pose(f:Frame): Start? {
         // 先区分握拳、独立食指、双指伸直，不再检测任何捏合。
-        val othersClosed=f.ring<.69f && f.little<.69f
+        val othersClosed=f.ring<.69f && f.little<.69f &&
+            !f.ringForward && !f.littleForward
         if(!othersClosed) return null
+        val indexOpen=f.index>.78f || f.indexForward
+        val middleOpen=f.middle>.76f || f.middleForward
         return when {
-            f.index<.58f && f.middle<.58f -> Start.FIST
-            f.index>.78f && f.middle<.64f -> Start.INDEX_DOWN
-            f.index>.78f && f.middle>.76f -> Start.TWO_MOVE
+            !indexOpen && f.index<.58f && f.middle<.58f && !f.middleForward -> Start.FIST
+            indexOpen && middleOpen -> Start.TWO_MOVE // 与食指单独伸直互斥
+            indexOpen && f.middle<.64f && !f.middleForward -> Start.INDEX_DOWN
             else -> null
         }
     }
@@ -110,6 +143,8 @@ class DynamicFingerDetector(
         candidateKey=null
         candidateFrames=0
         candidateAt=0L
+        motionPath=0f
+        lostTwoFrames=0
     }
 
     fun clear() {
@@ -189,9 +224,21 @@ class DynamicFingerDetector(
                 phase=Phase.ARMED
                 armedAt=now
                 baseline=current
-                val msg="起手式已确认："+description(s)
-                hint(msg)
-                state(msg)
+                smoothedX=current.x
+                smoothedY=current.y
+                motionPath=0f
+                lostTwoFrames=0
+                // 悬浮提示只显示手形；动作名称等到真正执行才显示。
+                hint(when(s) {
+                    Start.FIST -> "✊"
+                    Start.INDEX_DOWN -> "☝️"
+                    Start.TWO_MOVE -> "✌️"
+                })
+                state(when(s) {
+                    Start.FIST -> "握拳起手式已确认"
+                    Start.INDEX_DOWN -> "食指起手式已确认"
+                    Start.TWO_MOVE -> "双指起手式已确认"
+                })
             }
             return null
         }
@@ -203,22 +250,41 @@ class DynamicFingerDetector(
         val origin=baseline ?: return null
         val event=when(s) {
             Start.FIST ->
-                if(current.index>.77f && current.index-origin.index>.21f &&
-                    current.middle<.66f && current.ring<.72f && current.little<.72f)
+                if((current.index>.77f || current.indexForward) &&
+                    (current.index-origin.index>.21f || current.indexForward) &&
+                    current.middle<.66f && !current.middleForward &&
+                    current.ring<.72f && current.little<.72f)
                     "Index_Up" else null
             Start.INDEX_DOWN ->
-                if(current.index<.65f && origin.index-current.index>.21f &&
-                    current.middle<.72f && current.ring<.72f && current.little<.72f)
+                if(current.index<.65f && !current.indexForward &&
+                    origin.index-current.index>.21f &&
+                    current.middle<.72f && !current.middleForward &&
+                    current.ring<.72f && current.little<.72f)
                     "Index_Down" else null
             Start.TWO_MOVE -> {
-                // 非双指伸直状态时禁止判断方向，避免弯手指误认为整掌移动。
-                if(actualPose!=Start.TWO_MOVE) null else {
-                    val dx=(origin.x-current.x)/origin.palmWidth // 镜像前置摄像头
-                    val dy=(current.y-origin.y)/origin.palmWidth
+                // 短暂的手指遮挡不立即丢失准备状态；连续丢失则重新确认。
+                if(actualPose!=Start.TWO_MOVE) {
+                    lostTwoFrames++
+                    if(lostTwoFrames>=3) reset()
+                    null
+                } else {
+                    lostTwoFrames=0
+                    // 低通跟踪掌心：不用食指/中指的指尖位置判断移动。
+                    val nx=smoothedX+(current.x-smoothedX)*.78f
+                    val ny=smoothedY+(current.y-smoothedY)*.78f
+                    motionPath+=hypot(nx-smoothedX,ny-smoothedY)
+                    smoothedX=nx;smoothedY=ny
+                    val dx=(origin.x-smoothedX)/origin.palmWidth
+                    val dy=(smoothedY-origin.y)/origin.palmWidth
+                    val net=hypot(dx,dy)
+                    val travel=motionPath/origin.palmWidth
+                    // 往返晃动/拐弯不够直，不应该当成单方向动作。
+                    val straight=net/travel.coerceAtLeast(.0001f)
                     when {
-                        abs(dx)>=moveThreshold && abs(dx)>abs(dy)*1.30f ->
+                        net<moveThreshold || straight<.76f -> null
+                        abs(dx)>abs(dy)*1.40f ->
                             if(dx>0) "Two_Move_Right" else "Two_Move_Left"
-                        abs(dy)>=moveThreshold && abs(dy)>abs(dx)*1.30f ->
+                        abs(dy)>abs(dx)*1.40f ->
                             if(dy>0) "Two_Move_Down" else "Two_Move_Up"
                         else -> null
                     }

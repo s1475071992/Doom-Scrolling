@@ -21,7 +21,7 @@ class GestureMappingActivity : ComponentActivity() {
                     Column(Modifier.fillMaxSize().padding(insets).padding(16.dp)) {
                         Text("动作手势映射",
                             style = MaterialTheme.typography.headlineSmall)
-                        Text("只有六项普通手势：握拳伸食指上翻、伸直食指弯下翻、双指伸直后上下左右移动。起手式需保持约半秒，确认后再动作。空鼠捏合不受影响。",
+                        Text("握拳、单指伸直、双指伸直分别对应 ✊ ☝️ ✌️ 起手提示；双指可斜朝摄像头，保持姿势后移动整只手。手心或手背朝向均支持，触发动作时才显示动作名称。",
                             style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(12.dp))
                         val names = GestureCatalog.known

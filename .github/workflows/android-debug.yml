@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   push:
-    branches: [main, fix/six-gestures-stable-poses-v17]
+    branches: [main, feature/robust-two-finger-motion-minimal-hud-v18]
   pull_request:
     branches: [main]
   workflow_dispatch:

@@ -286,6 +286,8 @@ class AccessibilityHud(private val service: AccessibilityService) {
 
         fun message(value: String) {
             toast = value.take(70)
+            labelPaint.textSize = (if (toast=="✊" || toast=="☝️" || toast=="✌️") 26f else 14f) *
+                resources.displayMetrics.scaledDensity
             toastUntil = SystemClock.uptimeMillis() + 1350L
             invalidate()
             postDelayed({ invalidate() }, 1400L)

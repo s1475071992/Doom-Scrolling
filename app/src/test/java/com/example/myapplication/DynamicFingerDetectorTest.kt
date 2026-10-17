@@ -56,7 +56,7 @@ class DynamicFingerDetectorTest {
         assertNull(d.process(fist,460L))
         assertNull(d.process(fist,570L))
         assertEquals(1,hints.size)
-        assertTrue(hints[0].contains("握拳"))
+        assertEquals("✊",hints[0])
         assertNull(d.process(fist,610L))
         assertNull(d.process(pose(indexExtended=true),670L))
         assertNull(d.process(pose(indexExtended=true),760L))
@@ -75,7 +75,7 @@ class DynamicFingerDetectorTest {
         val d=detector(hints)
         val two=pose(indexExtended=true,middleExtended=true)
         arm(d,two)
-        assertTrue(hints.single().contains("食指、中指伸直"))
+        assertEquals("✌️",hints.single())
         listOf(640L,720L,810L,900L).forEach { assertNull(d.process(two,it)) }
     }
 
@@ -125,5 +125,55 @@ class DynamicFingerDetectorTest {
         val p=pose(indexExtended=true,thumbTouchingIndex=true)
         arm(d,p)
         listOf(640L,730L,840L).forEach { assertNull(d.process(p,it)) }
+    }
+
+    /**
+     * 手心/手背及斜向镜头的共同难点：x-y 中指尖和掌骨投影几乎重合。
+     * 只变 z 号模拟朝/背摄像头的两种方向，均要保持双指识别。
+     */
+    private fun forwardTwoFingers(depth:Float, deltaX:Float=0f,
+                                  deltaY:Float=0f, mirror:Boolean=false
+    ):List<HandDetectionAnalyzer.NormalizedPoint> {
+        val p=pose(deltaX=deltaX,deltaY=deltaY).toMutableList()
+        fun pt(x:Float,y:Float,z:Float=0f)=HandDetectionAnalyzer.NormalizedPoint(x,y,z)
+        p[6]=pt(p[5].x,p[5].y,depth*.45f)
+        p[8]=pt(p[5].x,p[5].y,depth)
+        p[10]=pt(p[9].x,p[9].y,depth*.45f)
+        p[12]=pt(p[9].x,p[9].y,depth)
+        return if(mirror) p.map { pt(1f-it.x,it.y,it.z) } else p
+    }
+
+    @Test fun palmFacingAndBackFacingCameraBothRecognizeTwoFingerMovement() {
+        for(depth in listOf(-.38f,.38f)) {
+            val hints=mutableListOf<String>()
+            val d=detector(hints)
+            arm(d,forwardTwoFingers(depth))
+            assertEquals(listOf("✌️"),hints)
+            assertEquals("Two_Move_Right",finish(d,forwardTwoFingers(depth,deltaX=-.22f)))
+        }
+    }
+
+    @Test fun mirroredHandAlsoTracksDirectionFromPalmCenter() {
+        val d=detector()
+        arm(d,forwardTwoFingers(depth=.38f,mirror=true))
+        assertEquals("Two_Move_Right",finish(d,
+            forwardTwoFingers(depth=.38f,deltaX=.22f,mirror=true)))
+    }
+
+    @Test fun diagonalMotionIsNotMistakenForCardinalDirection() {
+        val d=detector()
+        arm(d,pose(indexExtended=true,middleExtended=true))
+        listOf(640L,720L,810L,900L).forEach {
+            assertNull(d.process(pose(
+                indexExtended=true,middleExtended=true,deltaX=.20f,deltaY=.20f),it))
+        }
+    }
+
+    @Test fun forwardForeshortenedFingersAreNotAutomaticallyClicked() {
+        val d=detector()
+        arm(d,forwardTwoFingers(depth=-.38f))
+        listOf(640L,720L,810L,900L).forEach {
+            assertNull(d.process(forwardTwoFingers(depth=-.38f),it))
+        }
     }
 }
