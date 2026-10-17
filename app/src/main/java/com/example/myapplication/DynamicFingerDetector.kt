@@ -99,7 +99,7 @@ class DynamicFingerDetector(
         Start.TWO_MOVE -> "食指、中指伸直：准备向上下左右移动手掌"
     }
 
-    private fun reset() {
+    fun reset() {
         phase=Phase.IDLE
         start=null
         baseline=null
