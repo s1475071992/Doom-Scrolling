@@ -17,6 +17,8 @@ object GestureRuntime {
         private set
     @Volatile var powerSaving: Boolean = true
         private set
+    @Volatile var experimentalNpu: Boolean = false
+        private set
     @Volatile var accelerationMode: AccelerationMode = AccelerationMode.AUTO
         private set
 
@@ -26,6 +28,7 @@ object GestureRuntime {
         feedback = pref.getBoolean("feedback", true)
         powerSaving = pref.getBoolean("power_saving", true)
         accelerationMode = AccelerationMode.fromKey(pref.getString("ai_acceleration_mode", "auto"))
+        experimentalNpu = pref.getBoolean("experimental_npu", false)
     }
 
     fun setAirMouse(context: Context, enabled: Boolean) {
@@ -39,6 +42,12 @@ object GestureRuntime {
         powerSaving = enabled
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("power_saving", enabled).apply()
+    }
+
+    fun setExperimentalNpu(context: Context, enabled: Boolean) {
+        experimentalNpu = enabled
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean("experimental_npu", enabled).apply()
     }
 
     fun setAccelerationMode(context: Context, mode: AccelerationMode) {

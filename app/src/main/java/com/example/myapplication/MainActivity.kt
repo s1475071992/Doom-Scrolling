@@ -409,9 +409,22 @@ fun MainScreen(
                         Text(mode.title, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
+                var npuPreview by remember { mutableStateOf(GestureRuntime.experimentalNpu) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("实验性双 NPU 流水线")
+                        Text("允许请求 MediaTek／Qualcomm NPU 执行掌心检测和手部关键点。未做真机委托验证，请先保留关闭。",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = npuPreview, onCheckedChange = {
+                        npuPreview = it
+                        GestureRuntime.setExperimentalNpu(context, it)
+                    })
+                }
                 Text(
-                    "当前 NPU 引擎尚未完成芯片与模型验证：自动模式实际尝试 GPU → CPU。" +
-                        "系统摄像头采集和颜色转换不能直接交给 NPU。",
+                    if (npuPreview)
+                        "NPU 实验开启：自动模式尝试两个 NPU 子模型，出错回退 GPU → CPU；界面不会声称已证明硬件执行。"
+                    else "NPU 实验关闭：自动模式目前使用 GPU → CPU。",
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(

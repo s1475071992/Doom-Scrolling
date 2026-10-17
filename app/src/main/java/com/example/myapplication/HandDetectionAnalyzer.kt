@@ -47,17 +47,29 @@ class HandDetectionAnalyzer(
     private var measuredFps = 0f
     private var lastDiagnosticsAt = 0L
     private var recognizer: GestureRecognizer? = null
+    private var npuPipeline: NpuHandPipeline? = null
     @Volatile private var activeBackend: InferenceBackend? = null
     @Volatile private var gpuRuntimeFailed = false
 
-    fun isReady(): Boolean = recognizer != null
+    fun isReady(): Boolean = recognizer != null || npuPipeline != null
 
 
     init {
         // The caller constructs this analyzer on cameraExecutor, NOT the
         // Android main thread. MediaPipe GPU's EGL context must be created
         // and used on the same single-thread executor.
-        for (backend in AccelerationPolicy.candidates(GestureRuntime.accelerationMode)) {
+        if (GestureRuntime.experimentalNpu && GestureRuntime.accelerationMode == AccelerationMode.AUTO) {
+            try {
+                npuPipeline = NpuHandPipeline.create(context)
+                if (npuPipeline != null) {
+                    activeBackend = InferenceBackend.NPU
+                    GestureDiagnostics.backend("NPU 实验执行中 · 硬件委托尚待证实")
+                }
+            } catch (e: Exception) {
+                Log.w("HandDetection", "Experimental NPU pipeline unavailable", e)
+            }
+        }
+        if (npuPipeline == null) for (backend in AccelerationPolicy.candidates(GestureRuntime.accelerationMode)) {
             if (backend == InferenceBackend.NPU) {
                 // Not installed: never claim NPU acceleration from SoC name.
                 continue
@@ -74,7 +86,7 @@ class HandDetectionAnalyzer(
                 Log.w("HandDetection", "$backend initialization failed", e)
             }
         }
-        if (recognizer == null) {
+        if (recognizer == null && npuPipeline == null) {
             Log.e("HandDetection", "Both GPU and CPU failed to initialize")
             GestureDiagnostics.backend("识别引擎初始化失败")
         }
@@ -142,6 +154,26 @@ class HandDetectionAnalyzer(
         }
     }
 
+    private fun giveUpOnNpu(error: Exception) {
+        Log.w("HandDetection", "NPU experimental pipeline failed, falling back", error)
+        try { npuPipeline?.close() } catch (e: Exception) {
+            Log.w("HandDetection", "NPU close failed", e)
+        }
+        npuPipeline = null
+        activeBackend = null
+        for (backend in listOf(InferenceBackend.GPU, InferenceBackend.CPU)) {
+            try {
+                recognizer = createRecognizer(backend)
+                activeBackend = backend
+                GestureDiagnostics.backend("${backend.name} · NPU 实验失败后回退")
+                return
+            } catch (e: Exception) {
+                Log.w("HandDetection", "NPU fallback failed on $backend", e)
+            }
+        }
+        GestureDiagnostics.backend("NPU / GPU / CPU 均不可用")
+    }
+
     override fun analyze(imageProxy: ImageProxy) {
         // Adaptive inference rate; the user-enabled camera stays on, with
         // hand detection at low standby frequency to allow rapid wake-up.
@@ -151,18 +183,41 @@ class HandDetectionAnalyzer(
             GestureRuntime.airMouse, GestureRuntime.powerSaving,
             now - lastHandAtMs
         )
-        if (now - lastFrameAtMs < minInterval || recognizer == null ||
+        if (now - lastFrameAtMs < minInterval ||
+            (recognizer == null && npuPipeline == null) ||
             !busy.compareAndSet(false, true)) {
             imageProxy.close()
             return
         }
         lastFrameAtMs = now
         try {
-            // Prefer packed CameraX RGBA data: no JPEG encode/decode.
-            val image = BitmapImageBuilder(imageProxy.toOptimizedBitmap()).build()
-            val timestamp = maxOf(SystemClock.uptimeMillis(), lastTimeMs + 1L)
-            lastTimeMs = timestamp
-            recognizer!!.recognizeAsync(image, timestamp)
+            val bitmap = imageProxy.toOptimizedBitmap()
+            val pipeline = npuPipeline
+            if (pipeline != null) {
+                // NPU path runs both networks synchronously on cameraExecutor.
+                // Projection output uses the exact same gesture state machine.
+                try {
+                    val points = pipeline.process(bitmap)
+                    if (points == null) {
+                        recordFrame(SystemClock.uptimeMillis(), "None", 0f)
+                        onHandsDetected(null)
+                    } else {
+                        emitLandmarks(points.map { NormalizedPoint(it.x, it.y, it.z) },
+                            "检测到手部", 1f)
+                    }
+                } catch (e: Exception) {
+                    giveUpOnNpu(e)
+                    onHandsDetected(null)
+                } finally {
+                    busy.set(false)
+                }
+            } else {
+                // MediaPipe owns its MPImage until the async result callback.
+                val image = BitmapImageBuilder(bitmap).build()
+                val timestamp = maxOf(SystemClock.uptimeMillis(), lastTimeMs + 1L)
+                lastTimeMs = timestamp
+                recognizer!!.recognizeAsync(image, timestamp)
+            }
         } catch (e: Exception) {
             Log.e("HandDetection", "Frame analysis failed", e)
             busy.set(false)
@@ -182,15 +237,18 @@ class HandDetectionAnalyzer(
         // The six released gestures and air-mouse use landmarks exclusively.
         // Do not allocate legacy geometry descriptors or run an optional TFLite
         // classifier on every frame: neither influences any mapped action.
-        lastHandAtMs = SystemClock.uptimeMillis()
-        val p = hand.map { NormalizedPoint(it.x(), it.y(), it.z()) }
+        val points = hand.map { NormalizedPoint(it.x(), it.y(), it.z()) }
         val top = result.gestures().firstOrNull()?.firstOrNull()
         val topName = GestureCatalog.canonical(top?.categoryName() ?: "None")
         val score = top?.score() ?: 0f
         val name = if (score >= .62f && topName in GestureCatalog.labels)
             topName else "检测到手部"
-        recordFrame(SystemClock.uptimeMillis(), name, score)
+        emitLandmarks(points, name, score)
+    }
 
+    private fun emitLandmarks(p: List<NormalizedPoint>, name: String, score: Float) {
+        lastHandAtMs = SystemClock.uptimeMillis()
+        recordFrame(lastHandAtMs, name, score)
         val dx = p[4].x - p[8].x
         val dy = p[4].y - p[8].y
         val dist2 = dx * dx + dy * dy
@@ -235,6 +293,8 @@ class HandDetectionAnalyzer(
         // Always call on cameraExecutor, never the main thread.
         recognizer?.close()
         recognizer = null
+        npuPipeline?.close()
+        npuPipeline = null
         activeBackend = null
         busy.set(false)
     }
