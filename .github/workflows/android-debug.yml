@@ -52,6 +52,11 @@ jobs:
           echo 'd6d160104f110e690f1c9b0c54ab3855af1a12e405dcc6e644dd7e3e1955aac4  /tmp/litert_npu_jit.zip' \
             | sha256sum --check
           unzip -Z1 /tmp/litert_npu_jit.zip | grep -E 'mediatek_runtime|qualcomm_runtime_v'
+          # Experimental APK includes actual vendor dispatcher/compiler plugins.
+          # Qualcomm-specific QNN/HTP runtime and every other Hexagon variant
+          # still require separately licensed/vendor-matched distribution.
+          python3 tools/install_npu_jit_plugins.py \
+            /tmp/litert_npu_jit.zip app/src/main/jniLibs/arm64-v8a
       - name: Test, Android Lint and build debug APK
         run: |
           chmod +x gradlew
