@@ -20,7 +20,8 @@ class DynamicFingerDetector(
     private val hint: (String) -> Unit = {
         ScrollAccessibilityService.getInstance()?.showGestureFeedback(it)
     },
-    private val state: (String) -> Unit = { GestureDiagnostics.state(it) }
+    private val state: (String) -> Unit = { GestureDiagnostics.state(it) },
+    private val trace: (String) -> Unit = { GestureDiagnostics.gestureTrace(it) }
 ) {
     private enum class Phase { IDLE, CONFIRMING, ARMED, FIRED }
     private enum class Start { FIST, INDEX_DOWN, TWO_MOVE }
@@ -47,10 +48,14 @@ class DynamicFingerDetector(
     private var smoothedY = 0f
     private var motionPath = 0f
     private var lostTwoFrames = 0
+    private var confirmingMisses = 0
+    private var candidateMisses = 0
 
     private val settleMs = 440L
     private val stableFrameCount = 5
-    private val moveThreshold = .55f // 平滑后需要明确的整掌位移
+    // NPU landmarks jitter and palm-size variation made .55 too strict.
+    // Require directional persistence (3 frames + 120 ms) to avoid false scroll.
+    private val moveThreshold = .33f
 
     private fun distance(a: P, b: P) = hypot(a.x-b.x, a.y-b.y)
 
@@ -113,15 +118,22 @@ class DynamicFingerDetector(
 
     private fun pose(f:Frame): Start? {
         // 先区分握拳、独立食指、双指伸直，不再检测任何捏合。
+        val indexOpen=f.index>.76f || f.indexForward
+        val middleOpen=f.middle>.74f || f.middleForward
+        // NPU points fluctuate around these boundaries. For V-pose only,
+        // accept a slightly softer extension threshold; ring/pinky must
+        // still be bent, so four open fingers never become a V gesture.
+        val twoOpen=(f.index>.66f || f.indexForward) &&
+            (f.middle>.65f || f.middleForward)
+        val twoOthersClosed=f.ring<.76f && f.little<.76f &&
+            !f.ringForward && !f.littleForward
+        if(twoOpen && twoOthersClosed) return Start.TWO_MOVE
         val othersClosed=f.ring<.69f && f.little<.69f &&
             !f.ringForward && !f.littleForward
         if(!othersClosed) return null
-        val indexOpen=f.index>.78f || f.indexForward
-        val middleOpen=f.middle>.76f || f.middleForward
         return when {
             !indexOpen && f.index<.58f && f.middle<.58f && !f.middleForward -> Start.FIST
-            indexOpen && middleOpen -> Start.TWO_MOVE // 与食指单独伸直互斥
-            indexOpen && f.middle<.64f && !f.middleForward -> Start.INDEX_DOWN
+            indexOpen && !middleOpen && f.middle<.64f && !f.middleForward -> Start.INDEX_DOWN
             else -> null
         }
     }
@@ -133,6 +145,7 @@ class DynamicFingerDetector(
     }
 
     fun reset() {
+        GestureRuntime.setPoseInProgress(false)
         phase=Phase.IDLE
         start=null
         baseline=null
@@ -145,6 +158,8 @@ class DynamicFingerDetector(
         candidateAt=0L
         motionPath=0f
         lostTwoFrames=0
+        confirmingMisses=0
+        candidateMisses=0
     }
 
     fun clear() {
@@ -154,16 +169,23 @@ class DynamicFingerDetector(
 
     private fun candidate(event:String?,now:Long):String? {
         if(event==null) {
+            // A tiny NPU landmark wobble may momentarily drop below the
+            // displacement/straightness threshold. Keep the same direction
+            // for up to two bad samples; never count them as valid frames.
+            if(candidateKey!=null && ++candidateMisses<=2) return null
             candidateKey=null
             candidateFrames=0
+            candidateMisses=0
             return null
         }
         if(candidateKey!=event) {
             candidateKey=event
             candidateAt=now
             candidateFrames=1
+            candidateMisses=0
             return null
         }
+        candidateMisses=0
         candidateFrames++
         if(candidateFrames<3 || now-candidateAt<120L) return null
         phase=Phase.FIRED
@@ -176,12 +198,18 @@ class DynamicFingerDetector(
     /** 时间可注入，便于自动测试逐帧轨迹。 */
     fun process(points:List<P>?,now:Long=SystemClock.uptimeMillis()):String? {
         if(points==null || points.size!=21) {
+            trace("无有效 21 点关键点 · 阶段:${phase.name}")
             if(now-lastSeenAt>330L) clear()
             return null
         }
         lastSeenAt=now
         val current=frame(points)
         val actualPose=pose(current)
+        trace("判定:${actualPose?.name ?: "未满足"} · 阶段:${phase.name} · " +
+            "食指 ${"%.2f".format(java.util.Locale.US, current.index)} / " +
+            "中指 ${"%.2f".format(java.util.Locale.US, current.middle)} · " +
+            "无名指 ${"%.2f".format(java.util.Locale.US, current.ring)} / " +
+            "小指 ${"%.2f".format(java.util.Locale.US, current.little)}")
         if(phase==Phase.FIRED) {
             // 同一次保持姿势/移动只能触发一次；需离开原起手状态才可重新准备。
             val off=when(start) {
@@ -205,6 +233,9 @@ class DynamicFingerDetector(
                 startedAt=now
                 stableFrames=1
                 phase=Phase.CONFIRMING
+                // The analyzer now samples at full gesture cadence until
+                // we either confirm this pose or reset to waiting mode.
+                GestureRuntime.setPoseInProgress(true)
                 // 减少误触：候选起手式不再立即弹窗。
             }
             return null
@@ -215,12 +246,23 @@ class DynamicFingerDetector(
             val dx=current.x-b.x
             val dy=current.y-b.y
             // 候选期必须手形持续一致、整只手大体保持稳定。
-            if(actualPose!=s || hypot(dx,dy)>b.palmWidth*.32f) {
+            val movingTooFast = hypot(dx,dy)>b.palmWidth *
+                (if(s==Start.TWO_MOVE) .52f else .32f)
+            if(actualPose!=s || movingTooFast) {
+                // A brief NPU landmark misclassification should not force a
+                // new 1 FPS standby wakeup for an otherwise stable V gesture.
+                if(s==Start.TWO_MOVE && actualPose!=s && !movingTooFast &&
+                    ++confirmingMisses<=2) {
+                    return null
+                }
                 reset()
                 return null
             }
+            confirmingMisses=0
             stableFrames++
-            if(now-startedAt>=settleMs && stableFrames>=stableFrameCount) {
+            val requiredMs=if(s==Start.TWO_MOVE) 300L else settleMs
+            val requiredFrames=if(s==Start.TWO_MOVE) 3 else stableFrameCount
+            if(now-startedAt>=requiredMs && stableFrames>=requiredFrames) {
                 phase=Phase.ARMED
                 armedAt=now
                 baseline=current
@@ -265,26 +307,36 @@ class DynamicFingerDetector(
                 // 短暂的手指遮挡不立即丢失准备状态；连续丢失则重新确认。
                 if(actualPose!=Start.TWO_MOVE) {
                     lostTwoFrames++
-                    if(lostTwoFrames>=3) reset()
-                    null
+                    if(lostTwoFrames>=5) reset()
+                    // Preserve the directional candidate across a few bad
+                    // NPU landmark frames rather than clearing it below.
+                    return null
                 } else {
                     lostTwoFrames=0
                     // 低通跟踪掌心：不用食指/中指的指尖位置判断移动。
                     val nx=smoothedX+(current.x-smoothedX)*.78f
                     val ny=smoothedY+(current.y-smoothedY)*.78f
-                    motionPath+=hypot(nx-smoothedX,ny-smoothedY)
+                    val step=hypot(nx-smoothedX,ny-smoothedY)
+                    // Ignore sub-palm-width landmark noise in the traveled
+                    // path; otherwise jitter alone drives straightness down.
+                    motionPath+=(step-current.palmWidth*.045f).coerceAtLeast(0f)
                     smoothedX=nx;smoothedY=ny
                     val dx=(origin.x-smoothedX)/origin.palmWidth
                     val dy=(smoothedY-origin.y)/origin.palmWidth
                     val net=hypot(dx,dy)
                     val travel=motionPath/origin.palmWidth
-                    // 往返晃动/拐弯不够直，不应该当成单方向动作。
+                    // Direction must remain predominantly cardinal; static
+                    // V or diagonal movement must not trigger scrolling.
                     val straight=net/travel.coerceAtLeast(.0001f)
+                    trace("双指已确认 · 位移 x=${"%.2f".format(java.util.Locale.US, dx)} " +
+                        "y=${"%.2f".format(java.util.Locale.US, dy)} " +
+                        "净位移=${"%.2f".format(java.util.Locale.US, net)} / $moveThreshold " +
+                        "直线度=${"%.2f".format(java.util.Locale.US, straight)}")
                     when {
-                        net<moveThreshold || straight<.76f -> null
-                        abs(dx)>abs(dy)*1.40f ->
+                        net<moveThreshold || straight<.72f -> null
+                        abs(dx)>abs(dy)*1.25f ->
                             if(dx>0) "Two_Move_Right" else "Two_Move_Left"
-                        abs(dy)>abs(dx)*1.40f ->
+                        abs(dy)>abs(dx)*1.25f ->
                             if(dy>0) "Two_Move_Down" else "Two_Move_Up"
                         else -> null
                     }

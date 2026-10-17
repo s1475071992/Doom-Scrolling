@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   push:
-    branches: [main, release/v1.9.0-rc.1-hardening]
+    branches: [main, release/v1.9.0-rc.1-hardening, experiment/ai-auto-acceleration-v110]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -39,10 +39,50 @@ jobs:
           curl --fail --location --retry 3 --output app/src/main/assets/gesture_recognizer.task \
             https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
           test -s app/src/main/assets/gesture_recognizer.task
+      - name: Inspect official task bundle and NPU experimental inputs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m unittest discover -s tools/tests -v
+          python3 tools/extract_mediapipe_submodels.py \
+            app/src/main/assets/gesture_recognizer.task app/src/main/assets
+          # LiteRT 2.3.0 fetches the MediaTek and Qualcomm NPU plugins from
+          # official Maven rather than the incomplete 2.2.0 vendor archive.
+          echo 'LiteRT 2.3 NPU vendor libraries will be resolved by Gradle.'
       - name: Test, Android Lint and build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
+      - name: Assert both NPU vendors and landmark models are packaged
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' | head -1)"
+          test -s "$APK"
+          unzip -Z1 "$APK" > /tmp/experimental_apk_contents.txt
+          grep -F 'lib/arm64-v8a/libLiteRtDispatch_MediaTek.so' /tmp/experimental_apk_contents.txt
+          grep -F 'lib/arm64-v8a/libLiteRtDispatch_Qualcomm.so' /tmp/experimental_apk_contents.txt
+          grep -F 'assets/palm_detection.tflite' /tmp/experimental_apk_contents.txt
+          grep -F 'assets/hand_landmark.tflite' /tmp/experimental_apk_contents.txt
+      - name: Validate release APK and signing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          unzip -Z1 "$APK" | grep -F 'assets/gesture_recognizer.task'
+          unzip -Z1 "$APK" | grep -F 'assets/palm_detection.tflite'
+          unzip -Z1 "$APK" | grep -F 'assets/hand_landmark.tflite'
+          unzip -Z1 "$APK" | grep -F 'lib/arm64-v8a/libLiteRtDispatch_Qualcomm.so'
+          unzip -Z1 "$APK" | grep -F 'lib/arm64-v8a/libLiteRtDispatch_MediaTek.so'
+      - name: Print Lint failures for experimental compatibility audit
+        if: failure()
+        shell: bash
+        run: |
+          if test -f app/build/reports/lint-results-debug.txt; then
+            grep -n -A 3 -E '^.*Error:' app/build/reports/lint-results-debug.txt | head -240 || true
+          fi
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4

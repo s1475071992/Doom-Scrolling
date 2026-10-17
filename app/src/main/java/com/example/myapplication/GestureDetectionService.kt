@@ -7,6 +7,8 @@ import android.media.AudioAttributes
 import android.os.Build
 import android.os.IBinder
 import androidx.camera.core.*
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -22,10 +24,11 @@ class GestureDetectionService : Service(), LifecycleOwner {
     override val lifecycle: Lifecycle = lifecycleRegistry
 
     private lateinit var cameraExecutor: ExecutorService
-    private var handDetectionAnalyzer: HandDetectionAnalyzer? = null
+    @Volatile private var handDetectionAnalyzer: HandDetectionAnalyzer? = null
     private val gestureScrollController = GestureScrollController()
     private var isCameraBound = false
     private var cameraProvider: ProcessCameraProvider? = null
+    private var sensorFpsController: CameraSensorFpsController? = null
 
     interface StatusCallback {
         fun onStatusChanged(status: String)
@@ -104,6 +107,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
         return START_NOT_STICKY
     }
 
+    @androidx.annotation.OptIn(markerClass = [ExperimentalCamera2Interop::class])
     private fun startBackgroundDetection() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -111,23 +115,57 @@ class GestureDetectionService : Service(), LifecycleOwner {
             try {
                 val provider = future.get()
                 cameraProvider = provider
-                // Activity releases its preview when Enable is tapped.
+                // Leave camera ownership in the FGS; only the recognizer's
+                // creation/method calls move to the single analysis executor.
                 provider.unbindAll()
-                handDetectionAnalyzer?.release()
-                handDetectionAnalyzer = HandDetectionAnalyzer(this) { gesture ->
-                    gestureScrollController.processGesture(gesture)
-                    updateStatus(if (gesture == null) "等待手势动作"
-                        else "已检测到手部，等待动作")
-                }
-                val analysis = ImageAnalysis.Builder()
-                    .setTargetResolution(android.util.Size(640, 480))
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                val builder = ImageAnalysis.Builder()
+                    .setTargetResolution(android.util.Size(480, 360))
+                    // Keep camera output in YUV; convert only a frame chosen for inference.
+                    // Avoid CameraX RGBA conversion on frames dropped by 1 FPS standby.
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                analysis.setAnalyzer(cameraExecutor, handDetectionAnalyzer!!)
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
-                isCameraBound = true
-                updateStatus("摄像头识别运行中，可跨应用控制")
+                // Measures real Camera2 captured frames independently of model
+                // inference, including those dropped by the analyzer.
+                Camera2Interop.Extender(builder)
+                    .setSessionCaptureCallback(SensorCaptureFpsMonitor())
+                val analysis = builder.build()
+
+                cameraExecutor.execute {
+                    // GPU delegates require initialization on their inference
+                    // thread, NOT on the Android main thread.
+                    val analyzer = HandDetectionAnalyzer(this) { gesture ->
+                        gestureScrollController.processGesture(gesture)
+                        updateStatus(if (gesture == null) "等待手势动作"
+                            else "已检测到手部，等待动作")
+                    }
+                    handDetectionAnalyzer = analyzer
+                    ContextCompat.getMainExecutor(this).execute mainBinding@{
+                        if (!active || instance !== this) return@mainBinding
+                        if (!analyzer.isReady()) {
+                            updateStatus("GPU 与 CPU 识别引擎均无法启动")
+                            stopSelf()
+                            return@mainBinding
+                        }
+                        try {
+                            analysis.setAnalyzer(cameraExecutor, analyzer)
+                            val camera = provider.bindToLifecycle(
+                                this, CameraSelector.DEFAULT_FRONT_CAMERA, analysis
+                            )
+                            isCameraBound = true
+                            sensorFpsController = CameraSensorFpsController(
+                                camera, ContextCompat.getMainExecutor(this)
+                            )
+                            GestureRuntime.setCameraActiveListener { responding ->
+                                sensorFpsController?.requestActive(responding)
+                            }
+                            updateStatus("摄像头识别运行中，可跨应用控制")
+                        } catch (e: Exception) {
+                            android.util.Log.e("GestureService", "Camera binding failed", e)
+                            updateStatus("摄像头运行错误：${e.message}")
+                            stopSelf()
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 android.util.Log.e("GestureService", "Camera binding failed", e)
                 updateStatus("摄像头运行错误：${e.message}")
@@ -186,6 +224,9 @@ class GestureDetectionService : Service(), LifecycleOwner {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        GestureRuntime.setCameraActiveListener(null)
+        sensorFpsController?.close()
+        sensorFpsController = null
         active = false
         ScrollAccessibilityService.setEnabled(false)
         GestureDiagnostics.reset()
@@ -205,8 +246,17 @@ class GestureDetectionService : Service(), LifecycleOwner {
             android.util.Log.e("GestureService", "Error unbinding camera on destroy", e)
         }
         
+        // Execute close() on the very same single thread that created GPU.
+        cameraExecutor.execute {
+            try {
+                handDetectionAnalyzer?.release()
+            } catch (e: Exception) {
+                android.util.Log.w("GestureService", "Failed to close hand model", e)
+            } finally {
+                handDetectionAnalyzer = null
+            }
+        }
         cameraExecutor.shutdown()
-        handDetectionAnalyzer?.release()
         instance = null
     }
 }

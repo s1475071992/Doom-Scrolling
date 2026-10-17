@@ -348,13 +348,22 @@ fun MainScreen(
             Column(Modifier.padding(14.dp)) {
                 Text("实时识别调试",
                     style = MaterialTheme.typography.titleMedium)
-                Text("识别帧率：" + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
+                Text("AI 模型推理 FPS：" + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
+                Text("摄像头实际采集：" + snapshot.cameraFps)
+                Text("摄像头帧率策略：" + snapshot.cameraTarget)
                 Text("识别手势：${snapshot.name}")
                 Text("置信度: " + String.format(java.util.Locale.US,
                     "%.0f%%", snapshot.confidence * 100f))
                 Text("状态: ${snapshot.state}")
                 Text("最后动作: ${snapshot.lastAction}")
                 Text("悬浮层: ${snapshot.overlay}")
+                Text("AI 推理后端: ${snapshot.backend}")
+                Text("芯片信息: ${snapshot.chipset}")
+                Text("模型执行统计: ${snapshot.npuModels}")
+                Text("硬件算子分配: ${snapshot.assignmentEvidence}")
+                Text("最近回退原因: ${snapshot.fallbackReason}")
+                Text("手势判断详情: ${snapshot.gestureTrace}")
+                Text("设备状态: ${snapshot.battery}")
                 if (isScrollingEnabledState.value) {
                     OutlinedButton(onClick = {
                         val service = ScrollAccessibilityService.getInstance()
@@ -374,13 +383,52 @@ fun MainScreen(
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("智能省电")
-                Text("无手时降低识别频率；普通手势约 15 帧、空鼠约 25 帧。关闭后优先保证响应速度。",
+                Text("等待起手式：AI 推理约 1 FPS，并请求摄像头最低支持帧率；起手式确认／空鼠自动恢复高帧率。摄像头使用 YUV，只有选中推理帧才转 RGB；实际采集 FPS 取决于驱动。",
                     style = MaterialTheme.typography.bodySmall)
             }
             Switch(checked = powerSavingEnabled, onCheckedChange = {
                 powerSavingEnabled = it
                 GestureRuntime.setPowerSaving(context, it)
             })
+        }
+
+        var accelerationMode by remember {
+            mutableStateOf(GestureRuntime.accelerationMode)
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("AI 加速模式",
+                    style = MaterialTheme.typography.titleMedium)
+                for (mode in AccelerationMode.entries) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        RadioButton(
+                            selected = accelerationMode == mode,
+                            onClick = {
+                                accelerationMode = mode
+                                GestureRuntime.setAccelerationMode(context, mode)
+                            }
+                        )
+                        Text(mode.title, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "自动模式默认依次尝试 NPU → GPU → CPU；不可用或运行失败自动降级。" +
+                        "NPU 仅代表 LiteRT 请求，芯片实际算子分配尚未经真机验证。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    if (isScrollingEnabledState.value)
+                        "切换模式后，关闭并重新开启手势识别才会生效。"
+                    else "下次开启识别时生效。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
 
         var feedbackEnabled by remember { mutableStateOf(GestureRuntime.feedback) }

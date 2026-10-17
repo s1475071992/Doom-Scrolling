@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.myapplication"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.9.0-rc.1"
+        versionCode = 17
+        versionName = "1.10.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -56,10 +56,17 @@ android {
 }
 
 dependencies {
-    implementation("com.google.ai.edge.litert:litert:1.4.1")
+    // Official LiteRT 2.3 Maven packages now ship both vendor compiler/dispatch plugins.
+    // Missing proprietary QNN DSP/HTP libs still require device-matched installation.
+    implementation("com.google.ai.edge.litert:litert:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-gpu:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-npu-runtime-mediatek:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-npu-runtime-qualcomm:2.3.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    // Ensures registerForActivityResult uses a modern Fragment library.
+    implementation("androidx.fragment:fragment:1.8.9")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)

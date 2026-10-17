@@ -31,7 +31,7 @@ class DynamicFingerDetectorTest {
     }
 
     private fun detector(hints:MutableList<String> = mutableListOf()) =
-        DynamicFingerDetector(hint={hints.add(it)},state={})
+        DynamicFingerDetector(hint={hints.add(it)},state={},trace={})
 
     private fun arm(d:DynamicFingerDetector,p:List<HandDetectionAnalyzer.NormalizedPoint>) {
         listOf(100L,220L,340L,440L,560L).forEach { t ->
@@ -43,6 +43,18 @@ class DynamicFingerDetectorTest {
         assertNull(d.process(p,640L))
         assertNull(d.process(p,720L))
         return d.process(p,810L)
+    }
+
+    @Test fun poseCandidateWakesInferenceAndResetReturnsToOneFps() {
+        val d = detector()
+        d.reset()
+        assertFalse(GestureRuntime.poseInProgress)
+        assertNull(d.process(pose(indexExtended = true), 100L))
+        assertTrue("检测到候选起手式后必须提高推理帧率", GestureRuntime.poseInProgress)
+        assertEquals(68L, RecognitionCadence.intervalMs(false, true, GestureRuntime.poseInProgress))
+        d.reset()
+        assertFalse(GestureRuntime.poseInProgress)
+        assertEquals(1000L, RecognitionCadence.intervalMs(false, true, GestureRuntime.poseInProgress))
     }
 
     @Test fun fistShowsHintOnlyAfterStableAndThenUp() {
@@ -176,4 +188,81 @@ class DynamicFingerDetectorTest {
             assertNull(d.process(forwardTwoFingers(depth=-.38f),it))
         }
     }
+
+    @Test fun npuTwoFingerLandmarkJitterDoesNotCancelArming() {
+        val hints = mutableListOf<String>()
+        val d = detector(hints)
+        val v = pose(indexExtended = true, middleExtended = true)
+        val misread = pose(indexExtended = true, middleExtended = false)
+        assertNull(d.process(v, 100L))
+        assertNull(d.process(misread, 170L)) // NPU misclassifies one frame
+        assertNull(d.process(v, 250L))
+        assertNull(d.process(v, 350L))
+        assertNull(d.process(v, 440L))
+        assertEquals("brief NPU jitter must not lose the V-pose", listOf("✌️"), hints)
+    }
+
+    @Test fun smallerTwoFingerMovesTriggerAllFourDirections() {
+        val deltas = listOf(
+            Triple(-.13f, 0f, "Two_Move_Right"),
+            Triple(.13f, 0f, "Two_Move_Left"),
+            Triple(0f, -.13f, "Two_Move_Up"),
+            Triple(0f, .13f, "Two_Move_Down")
+        )
+        for ((dx, dy, expected) in deltas) {
+            val d = detector()
+            arm(d, pose(indexExtended = true, middleExtended = true))
+            assertEquals(expected, finish(d, pose(
+                indexExtended = true, middleExtended = true,
+                deltaX = dx, deltaY = dy
+            )))
+        }
+    }
+
+    @Test fun temporaryMiddleFingerDropoutPreservesDirectionCandidate() {
+        val d = detector()
+        arm(d, pose(indexExtended = true, middleExtended = true))
+        val moving = pose(indexExtended = true, middleExtended = true, deltaX = -.15f)
+        assertNull(d.process(moving, 640L))
+        assertNull(d.process(pose(indexExtended = true), 720L))
+        assertNull(d.process(moving, 790L))
+        assertEquals("Two_Move_Right", d.process(moving, 870L))
+    }
+
+    @Test fun openFourFingersMustNotStartTwoFingerGesture() {
+        val hints = mutableListOf<String>()
+        val d = detector(hints)
+        val open = pose(indexExtended = true, middleExtended = true).toMutableList()
+        fun pt(x: Float, y: Float) = HandDetectionAnalyzer.NormalizedPoint(x, y)
+        open[14] = pt(.63f, .44f)
+        open[16] = pt(.63f, .21f)
+        open[18] = pt(.67f, .44f)
+        open[20] = pt(.67f, .22f)
+        for (now in listOf(100L, 220L, 340L, 440L, 560L)) {
+            assertNull(d.process(open, now))
+        }
+        assertTrue("four extended fingers must not arm V-pose", hints.isEmpty())
+    }
+    @Test fun npuJitterBetweenDirectionSamplesStillTriggersFourDirections() {
+        val directions = listOf(
+            Triple(-.16f, 0f, "Two_Move_Right"),
+            Triple(.16f, 0f, "Two_Move_Left"),
+            Triple(0f, -.16f, "Two_Move_Up"),
+            Triple(0f, .16f, "Two_Move_Down")
+        )
+        for ((dx,dy,event) in directions) {
+            val d = detector()
+            arm(d, pose(indexExtended = true, middleExtended = true))
+            val moved = pose(indexExtended = true, middleExtended = true,
+                deltaX = dx, deltaY = dy)
+            // Jitter can briefly drop net motion below the threshold,
+            // but never produces another stable direction candidate.
+            assertNull(d.process(moved, 640L))
+            assertNull(d.process(pose(indexExtended = true, middleExtended = true,
+                deltaX = dx * .5f, deltaY = dy * .5f), 720L))
+            assertNull(d.process(moved, 810L))
+            assertEquals(event, d.process(moved, 900L))
+        }
+    }
+
 }

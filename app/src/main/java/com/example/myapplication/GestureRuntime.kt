@@ -13,9 +13,18 @@ object GestureRuntime {
     private const val FILE = "gesture_runtime"
     @Volatile var airMouse: Boolean = false
         private set
+    // Updated by the dynamic-gesture state machine; never persisted.
+    @Volatile var poseInProgress: Boolean = false
+        private set
+    // The foreground camera service registers a listener while bound.
+    // The gesture state machine can immediately raise actual sensor FPS
+    // without waiting for the next 1 FPS standby frame.
+    @Volatile private var cameraActiveListener: ((Boolean) -> Unit)? = null
     @Volatile var feedback: Boolean = true
         private set
     @Volatile var powerSaving: Boolean = true
+        private set
+    @Volatile var accelerationMode: AccelerationMode = AccelerationMode.AUTO
         private set
 
     fun init(context: Context) {
@@ -23,10 +32,24 @@ object GestureRuntime {
         airMouse = pref.getBoolean("air_mouse", false)
         feedback = pref.getBoolean("feedback", true)
         powerSaving = pref.getBoolean("power_saving", true)
+        accelerationMode = AccelerationMode.fromKey(pref.getString("ai_acceleration_mode", "auto"))
+    }
+
+    fun setPoseInProgress(active: Boolean) {
+        if (poseInProgress == active) return
+        poseInProgress = active
+        cameraActiveListener?.invoke(airMouse || active)
+    }
+
+    fun setCameraActiveListener(listener: ((Boolean) -> Unit)?) {
+        cameraActiveListener = listener
+        listener?.invoke(airMouse || poseInProgress)
     }
 
     fun setAirMouse(context: Context, enabled: Boolean) {
+        val previous = airMouse
         airMouse = enabled
+        if (previous != enabled) cameraActiveListener?.invoke(enabled || poseInProgress)
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("air_mouse", enabled).apply()
         if (!enabled) ScrollAccessibilityService.getInstance()?.hideCursor()
@@ -36,6 +59,12 @@ object GestureRuntime {
         powerSaving = enabled
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("power_saving", enabled).apply()
+    }
+
+    fun setAccelerationMode(context: Context, mode: AccelerationMode) {
+        accelerationMode = mode
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString("ai_acceleration_mode", mode.key).apply()
     }
 
     fun setFeedback(context: Context, enabled: Boolean) {
@@ -53,11 +82,21 @@ object GestureDiagnostics {
         val confidence: Float = 0f,
         val lastAction: String = "—",
         val state: String = "等待动作",
-        val overlay: String = "尚未建立"
+        val overlay: String = "尚未建立",
+        val backend: String = "尚未启动",
+        val battery: String = "未采样",
+        val cameraFps: String = "未采样",
+        val cameraTarget: String = "尚未请求",
+        val chipset: String = "待检测",
+        val npuModels: String = "未运行",
+        val assignmentEvidence: String = "未验证",
+        val fallbackReason: String = "无",
+        val gestureTrace: String = "等待关键点"
     )
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var publishedState = ""
     @Volatile private var publishedAction = ""
+    @Volatile private var lastTraceAtMs = 0L
     var current by mutableStateOf(Snapshot())
         private set
 
@@ -81,9 +120,44 @@ object GestureDiagnostics {
     fun overlay(status: String) {
         main.post { current = current.copy(overlay = status) }
     }
+    fun battery(status: String) {
+        main.post { if (current.battery != status) current = current.copy(battery = status) }
+    }
+    fun cameraCapturedFps(status: String) {
+        main.post { if (current.cameraFps != status) current = current.copy(cameraFps = status) }
+    }
+    fun cameraTarget(status: String) {
+        main.post { if (current.cameraTarget != status) current = current.copy(cameraTarget = status) }
+    }
+    fun chipset(status: String) {
+        main.post { if (current.chipset != status) current = current.copy(chipset = status) }
+    }
+    fun npuModels(status: String) {
+        main.post { if (current.npuModels != status) current = current.copy(npuModels = status) }
+    }
+    fun assignmentEvidence(status: String) {
+        main.post {
+            if (current.assignmentEvidence != status) {
+                current = current.copy(assignmentEvidence = status)
+            }
+        }
+    }
+    fun fallbackReason(status: String) {
+        main.post { if (current.fallbackReason != status) current = current.copy(fallbackReason = status) }
+    }
+    fun gestureTrace(status: String) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastTraceAtMs < 350L) return
+        lastTraceAtMs = now
+        main.post { if (current.gestureTrace != status) current = current.copy(gestureTrace = status) }
+    }
+    fun backend(status: String) {
+        main.post { if (current.backend != status) current = current.copy(backend = status) }
+    }
     fun reset() {
         publishedState = ""
         publishedAction = ""
+        lastTraceAtMs = 0L
         main.post { current = Snapshot() }
     }
     fun text(): String = String.format(
