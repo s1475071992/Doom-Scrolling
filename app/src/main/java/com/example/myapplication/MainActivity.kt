@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
             _scrollStatus.value = if (ScrollAccessibilityService.getInstance() == null) {
                 "无障碍服务未连接，请到系统设置中开启"
             } else {
-                "已就绪，请进行手指翻动或捏合移动"
+                "已就绪：保持起手式约半秒，提示确认后再移动"
             }
         }
 
@@ -597,15 +597,15 @@ fun MainScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 上翻：先握拳，再伸直食指或同时伸直食指、中指",
+                    text = "• 食指上翻：先握拳，起手式确认后只伸直食指",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 下翻：先伸直食指或两指，再向掌心弯曲",
+                    text = "• 食指下翻：先伸直食指，其余收拢；确认后弯下食指",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 捏合：任意位置起手，保持捏合再上下左右移动",
+                    text = "• 双指移动：食指、中指伸直，确认后向上下左右移动整只手",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

@@ -37,16 +37,10 @@ object GestureActionMap {
     private val defaults = mapOf(
         "Index_Up" to SCROLL_UP,
         "Index_Down" to SCROLL_DOWN,
-        "Two_Up" to SCROLL_UP,
-        "Two_Down" to SCROLL_DOWN,
-        "Pinch1_Up" to SCROLL_UP,
-        "Pinch1_Down" to SCROLL_DOWN,
-        "Pinch1_Left" to SWIPE_LEFT,
-        "Pinch1_Right" to SWIPE_RIGHT,
-        "Pinch2_Up" to SCROLL_UP,
-        "Pinch2_Down" to SCROLL_DOWN,
-        "Pinch2_Left" to SWIPE_LEFT,
-        "Pinch2_Right" to SWIPE_RIGHT
+        "Two_Move_Up" to SCROLL_UP,
+        "Two_Move_Down" to SCROLL_DOWN,
+        "Two_Move_Left" to SWIPE_LEFT,
+        "Two_Move_Right" to SWIPE_RIGHT
     )
     private const val FILE = "our_gesture_action_map"
     private const val KEY = "mappings"
@@ -62,7 +56,7 @@ object GestureActionMap {
             while (keys.hasNext()) {
                 val k = keys.next()
                 val a = o.optString(k, NONE)
-                if (a in actions) {
+                if (a in actions && GestureCatalog.canonical(k) in GestureCatalog.known) {
                     val canonical = GestureCatalog.canonical(k)
                     // Prefer canonical key over a legacy alias if both exist.
                     if (canonical !in map || k == canonical) map[canonical] = a
@@ -75,6 +69,7 @@ object GestureActionMap {
         read(context)[GestureCatalog.canonical(gesture)] ?: NONE
     fun save(context: Context, gesture: String, action: String) {
         require(action in actions)
+        require(GestureCatalog.canonical(gesture) in GestureCatalog.known)
         val next = read(context)
         val name = GestureCatalog.canonical(gesture)
         // 存储 NONE 而不是删除，防止重新落到默认动作。
