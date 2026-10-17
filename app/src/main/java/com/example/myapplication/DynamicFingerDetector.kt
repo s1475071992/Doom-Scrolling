@@ -2,161 +2,224 @@ package com.example.myapplication
 
 import android.os.SystemClock
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.hypot
+import kotlin.math.max
 
 /**
- * 只检测相对运动，不使用“静止某手势持续几帧就执行”的旧逻辑。
- * 两类动作：一/双指屈伸上下翻、单/双指捏合后平移四方向。
+ * v1.5: 十二个动作分别有明确起手式。
+ * 先显示起手式准备提示，随后检测关节屈伸或捏合后的掌心平移。
+ * 使用 21 个 MediaPipe 标志点，不依赖静态手势分类的置信度。
  */
+private typealias P = HandDetectionAnalyzer.NormalizedPoint
+
 class DynamicFingerDetector {
-    private enum class Stage { WAIT, TRACK, FIRED }
-    private var stage = Stage.WAIT
-    private var startAt = 0L
-    private var lastAt = 0L
+
+    private enum class Phase { IDLE, PREPARING, ARMED, FIRED }
+    private data class Frame(
+        val index: Float, val middle: Float, val ring: Float, val little: Float,
+        val pinch: Int, val centerX: Float, val centerY: Float, val width: Float
+    )
+    private data class Pose(val key: String, val guidance: String, val mode: Int)
+
+    private var phase = Phase.IDLE
+    private var selected: Pose? = null
+    private var baseline: Frame? = null
+    private var firstAt = 0L
+    private var armedAt = 0L
+    private var lastSeen = 0L
     private var lastFireAt = 0L
-    private var stableFrames = 0
-    private var heldMode = 0 // 0 flex; 1 thumb-index; 2 thumb-index-middle
-    private var baselineIndex = 0f
-    private var baselineMiddle = 0f
-    private var baselinePalmX = 0f
-    private var baselinePalmY = 0f
-    private var baselineWidth = .1f
-    private var lastName = "None"
     private var releaseAt = 0L
+    private var lastHintAt = 0L
+    private var lastHint = ""
 
-    private fun dist(a: HandDetectionAnalyzer.NormalizedPoint, b: HandDetectionAnalyzer.NormalizedPoint) =
-        hypot(a.x - b.x, a.y - b.y)
+    private fun d(a: P, b: P): Float = hypot(a.x-b.x, a.y-b.y)
 
-    private fun palm(p: List<HandDetectionAnalyzer.NormalizedPoint>): Pair<Float, Float> {
-        val ids = listOf(0, 5, 9, 13, 17)
-        return ids.sumOf { p[it].x.toDouble() }.toFloat()/ids.size to
-            ids.sumOf { p[it].y.toDouble() }.toFloat()/ids.size
-    }
-    private fun palmWidth(p: List<HandDetectionAnalyzer.NormalizedPoint>) =
-        dist(p[5], p[17]).coerceAtLeast(.045f)
-
-    /** 以手掌纵轴为参考，屏蔽手掌整块的上下平移。 */
-    private fun extension(p: List<HandDetectionAnalyzer.NormalizedPoint>, tip: Int, base: Int, w: Float): Float {
-        val ux = p[9].x - p[0].x
-        val uy = p[9].y - p[0].y
-        val length = hypot(ux, uy).coerceAtLeast(.03f)
-        return ((p[tip].x - p[base].x)*ux + (p[tip].y - p[base].y)*uy)/(length*w)
+    private fun angle(a: P, b: P, c: P): Float {
+        val ax=a.x-b.x;val ay=a.y-b.y
+        val cx=c.x-b.x;val cy=c.y-b.y
+        val den=(hypot(ax,ay)*hypot(cx,cy)).coerceAtLeast(.0001f)
+        val cosine=((ax*cx+ay*cy)/den).coerceIn(-1f,1f)
+        return Math.toDegrees(acos(cosine).toDouble()).toFloat()
     }
 
-    private fun pinchMode(p: List<HandDetectionAnalyzer.NormalizedPoint>, w: Float): Int {
-        val first = dist(p[4],p[8])/w
-        val second = dist(p[4],p[12])/w
-        return when {
-            first < .47f && second < .62f -> 2
-            first < .47f -> 1
+    /** 弯曲和伸直都考虑关节角与沿掌心方向的伸展，避免单纯位移难以识别上翻。 */
+    private fun finger(p: List<P>, mcp:Int, pip:Int, tip:Int, width:Float):Float {
+        val ux=p[9].x-p[0].x
+        val uy=p[9].y-p[0].y
+        val length=hypot(ux,uy).coerceAtLeast(.04f)
+        val projected=((p[tip].x-p[mcp].x)*ux+(p[tip].y-p[mcp].y)*uy)/
+            (length*width)
+        val ext=(projected/1.30f).coerceIn(0f,1f)
+        return .48f*(angle(p[mcp],p[pip],p[tip])/180f)+.52f*ext
+    }
+
+    private fun frame(p:List<P>):Frame {
+        val w=d(p[5],p[17]).coerceAtLeast(.045f)
+        val ids=intArrayOf(0,5,9,13,17)
+        val cx=ids.sumOf { p[it].x.toDouble() }.toFloat()/5f
+        val cy=ids.sumOf { p[it].y.toDouble() }.toFloat()/5f
+        val first=d(p[4],p[8])/w
+        val second=d(p[4],p[12])/w
+        val pinch=when {
+            first<.62f && second<.69f -> 2
+            first<.62f && second>=.69f -> 1
             else -> 0
         }
+        return Frame(finger(p,5,6,8,w),finger(p,9,10,12,w),
+            finger(p,13,14,16,w),finger(p,17,18,20,w),pinch,cx,cy,w)
     }
 
-    fun process(p: List<HandDetectionAnalyzer.NormalizedPoint>?): String? {
-        val now = SystemClock.uptimeMillis()
-        if (p == null || p.size < 21) {
-            if (stage == Stage.FIRED && releaseAt == 0L) releaseAt = now
-            if (stage == Stage.WAIT || now - lastAt > 310L ||
-                (releaseAt != 0L && now - releaseAt > 300L)) reset()
+    /** 四个方位对应不同起手区；镜头左右镜像后再判断位置。 */
+    private fun direction(f:Frame):String? {
+        val screenX=1f-f.centerX
+        val y=f.centerY
+        val candidates=listOf(
+            "Right" to (.40f-screenX),
+            "Left" to (screenX-.60f),
+            "Down" to (.40f-y),
+            "Up" to (y-.60f)
+        )
+        return candidates.maxByOrNull { it.second }?.takeIf { it.second >= 0f }?.first
+    }
+
+    /** 食指独立上翻要求中指收紧；双指上翻要求两根指尖先保持半弯状态。 */
+    private fun pose(f:Frame):Pose? {
+        if(f.pinch>0) {
+            val dir=direction(f) ?: return null
+            val label=if(f.pinch==2) "双指捏合" else "单指捏合"
+            val guide=when(dir) {
+                "Up" -> "从下侧向上移动"
+                "Down" -> "从上侧向下移动"
+                "Left" -> "从右侧向左移动"
+                else -> "从左侧向右移动"
+            }
+            return Pose("Pinch${f.pinch}_$dir",guide,f.pinch)
+        }
+        if(f.ring>.76f && f.little>.76f) return null
+        if(f.index>.78f && f.middle>.76f)
+            return Pose("Two_Down","同时弯下两指",0)
+        if(f.index>.78f && f.middle<.64f)
+            return Pose("Index_Down","向掌心弯下食指",0)
+        if(f.index<.65f && f.middle in .40f.. .71f)
+            return Pose("Two_Up","同时伸直两指",0)
+        if(f.index<.65f && f.middle<.40f)
+            return Pose("Index_Up","伸直食指",0)
+        return null
+    }
+
+    private fun notifyPose(p:Pose, now:Long, ready:Boolean) {
+        val msg=if(ready) "准备：${GestureCatalog.label(p.key)} · ${p.guidance}"
+            else "已检测：${GestureCatalog.label(p.key)} · 请保持"
+        if(msg!=lastHint || now-lastHintAt>1900L) {
+            ScrollAccessibilityService.getInstance()?.showGestureFeedback(msg)
+            GestureDiagnostics.state(msg)
+            lastHint=msg
+            lastHintAt=now
+        }
+    }
+
+    fun process(p:List<P>?, now:Long=SystemClock.uptimeMillis()):String? {
+        if(p==null || p.size!=21) {
+            if(now-lastSeen>360L) clear()
             return null
         }
-        lastAt = now
-        val w = palmWidth(p)
-        val mode = pinchMode(p,w)
-        val center = palm(p)
-        val i = extension(p,8,5,w)
-        val m = extension(p,12,9,w)
-        if (stage == Stage.FIRED) {
-            val samePinch = heldMode > 0 && mode == heldMode
-            val flexHeld = heldMode == 0
-            // 捏合：松开后才能重触发；屈伸：恢复平稳位置并保持一会才重触发。
-            val released = if (heldMode > 0) !samePinch
-                else abs(i - baselineIndex) < .18f && abs(m - baselineMiddle) < .23f
-            if (released) {
-                if (releaseAt == 0L) releaseAt = now
-                if (now-releaseAt > 300L) reset()
-            } else releaseAt = 0L
+        lastSeen=now
+        val f=frame(p)
+        if(phase==Phase.FIRED) {
+            val b=baseline
+            val pos=selected
+            val released=when {
+                b==null || pos==null -> true
+                pos.mode>0 -> f.pinch!=pos.mode
+                pos.key.endsWith("Up") -> f.index<.67f &&
+                    (pos.key.startsWith("Index") || f.middle<.70f)
+                else -> f.index>.77f &&
+                    (pos.key.startsWith("Index") || f.middle>.76f)
+            }
+            if(released) {
+                if(releaseAt==0L) releaseAt=now
+                if(now-releaseAt>=220L) clear()
+            } else releaseAt=0L
+            return null
+        }
+        if(now-lastFireAt<550L) return null
+
+        val candidate=pose(f)
+        if(phase==Phase.IDLE) {
+            if(candidate==null) {
+                if(f.pinch>0 && now-lastHintAt>1800L) {
+                    val msg="检测到捏合：从画面上、下、左、右侧起手"
+                    ScrollAccessibilityService.getInstance()?.showGestureFeedback(msg)
+                    GestureDiagnostics.state(msg)
+                    lastHintAt=now
+                }
+                return null
+            }
+            selected=candidate;baseline=f;phase=Phase.PREPARING
+            firstAt=now
+            notifyPose(candidate,now,false)
+            return null
+        }
+        val b=baseline ?: run { clear();return null }
+        val chosen=selected ?: run { clear();return null }
+        if(phase==Phase.PREPARING) {
+            if(candidate?.key!=chosen.key ||
+                hypot(f.centerX-b.centerX,f.centerY-b.centerY)>max(.09f,b.width*.55f)) {
+                phase=Phase.IDLE
+                return null
+            }
+            if(now-firstAt>=115L) {
+                phase=Phase.ARMED
+                armedAt=now
+                notifyPose(chosen,now,true)
+            }
             return null
         }
 
-        if (stage == Stage.WAIT) {
-            if (now-lastFireAt < 450L) return null
-            // 不在手刚进入画面时立即触发。
-            if (stableFrames == 0) {
-                baselineIndex=i;baselineMiddle=m;baselinePalmX=center.first
-                baselinePalmY=center.second;baselineWidth=w;heldMode=mode
-                startAt=now;stableFrames=1
-                return null
-            }
-            if (mode != heldMode || abs(i-baselineIndex)>.12f ||
-                abs(m-baselineMiddle)>.13f ||
-                hypot(center.first-baselinePalmX,center.second-baselinePalmY)>.09f) {
-                stableFrames=0
-                return null
-            }
-            stableFrames++
-            if (stableFrames>=3 && now-startAt>=170L) {
-                stage=Stage.TRACK
-                startAt=now
-                GestureDiagnostics.state(if (mode>0) "等待捏合移动" else "等待手指翻动")
-            }
-            return null
-        }
-
-        // 超时或捏合解除：必须重新建立稳定基线。
-        if (now-startAt>1400L || (heldMode>0 && mode!=heldMode)) {
-            reset()
-            return null
-        }
-        var key:String?=null
-        if (heldMode>0) {
-            // 相机预览为镜像：方向按用户在屏幕看到的方向表示。
-            val dx=(baselinePalmX-center.first)/baselineWidth
-            val dy=(center.second-baselinePalmY)/baselineWidth
-            val threshold=.72f
-            if (abs(dx)>threshold || abs(dy)>threshold) {
-                val horizontal=abs(dx)>abs(dy)*1.45f
-                val vertical=abs(dy)>abs(dx)*1.45f
-                val d=if(horizontal) if(dx>0) "Right" else "Left"
-                    else if(vertical) if(dy>0) "Down" else "Up"
-                    else null
-                if(d!=null) key="Pinch${heldMode}_$d"
+        if(now-armedAt>2000L) { clear();return null }
+        val key=chosen.key
+        var trigger=false
+        if(chosen.mode>0) {
+            if(f.pinch!=chosen.mode) { clear();return null }
+            val dx=(b.centerX-f.centerX)/b.width
+            val dy=(f.centerY-b.centerY)/b.width
+            val threshold=.31f
+            trigger=when {
+                key.endsWith("Right") -> dx>threshold && abs(dx)>abs(dy)*1.15f
+                key.endsWith("Left") -> dx < -threshold && abs(dx)>abs(dy)*1.15f
+                key.endsWith("Down") -> dy>threshold && abs(dy)>abs(dx)*1.15f
+                else -> dy < -threshold && abs(dy)>abs(dx)*1.15f
             }
         } else {
-            // index and middle joint extension deltas decide single vs double.
-            val di=i-baselineIndex
-            val dm=m-baselineMiddle
-            val ring=extension(p,16,13,w)
-            val pinky=extension(p,20,17,w)
-            // Do not classify if full palm is open (four-finger motion).
-            val otherExtended=ring>.9f && pinky>.9f
-            if(!otherExtended && abs(di)>.58f) {
-                val matching=abs(dm)>.44f && di*dm>0 &&
-                    abs(di-dm)<.48f
-                val isolated=abs(dm)<.28f
-                if (matching || isolated) {
-                    val f=if(matching) "Two" else "Index"
-                    key=f+(if(di>0) "_Up" else "_Down")
-                }
+            trigger=when(key) {
+                "Index_Up" -> f.index>.78f && f.index-b.index>.22f && f.middle<.73f
+                "Index_Down" -> f.index<.65f && b.index-f.index>.20f && f.middle<.73f
+                "Two_Up" -> f.index>.76f && f.middle>.74f &&
+                    f.index-b.index>.18f && f.middle-b.middle>.15f
+                "Two_Down" -> f.index<.67f && f.middle<.68f &&
+                    b.index-f.index>.18f && b.middle-f.middle>.15f
+                else -> false
             }
         }
-        if (key!=null && now-startAt>=100L && now-lastFireAt>=450L) {
-            lastName=key
-            stage=Stage.FIRED
-            releaseAt=0L
+        if(trigger && now-armedAt>=75L) {
+            phase=Phase.FIRED
             lastFireAt=now
-            GestureDiagnostics.state("已执行，等待松开")
+            releaseAt=0L
+            GestureDiagnostics.state("完成动作：${GestureCatalog.label(key)}")
             return key
         }
         return null
     }
+
+    private fun clear() {
+        phase=Phase.IDLE
+        selected=null
+        baseline=null
+        firstAt=0L;armedAt=0L;releaseAt=0L
+    }
     fun reset() {
-        stage=Stage.WAIT
-        stableFrames=0
-        releaseAt=0L
-        heldMode=0
-        startAt=0L
-        GestureDiagnostics.state("等待动作")
+        clear()
+        GestureDiagnostics.state("等待起手式")
     }
 }

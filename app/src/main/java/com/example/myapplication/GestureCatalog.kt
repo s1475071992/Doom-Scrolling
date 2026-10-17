@@ -21,6 +21,20 @@ object GestureCatalog {
         "Shaka" to "六六六手势", "L_Shape" to "L形手势",
         "None" to "未识别", "No_Gesture" to "未识别"
     )
+    val startingPoses = mapOf(
+        "Index_Up" to "先弯曲食指，中指握紧；再伸直食指",
+        "Index_Down" to "先伸直食指，中指握紧；再弯下食指",
+        "Two_Up" to "食指、中指先半弯；再一起伸直",
+        "Two_Down" to "食指、中指先伸直；再一起弯下",
+        "Pinch1_Up" to "拇指与食指捏合，在画面下侧起手，手掌上移",
+        "Pinch1_Down" to "拇指与食指捏合，在画面上侧起手，手掌下移",
+        "Pinch1_Left" to "拇指与食指捏合，在画面右侧起手，手掌左移",
+        "Pinch1_Right" to "拇指与食指捏合，在画面左侧起手，手掌右移",
+        "Pinch2_Up" to "三指指尖汇聚，在画面下侧起手，手掌上移",
+        "Pinch2_Down" to "三指指尖汇聚，在画面上侧起手，手掌下移",
+        "Pinch2_Left" to "三指指尖汇聚，在画面右侧起手，手掌左移",
+        "Pinch2_Right" to "三指指尖汇聚，在画面左侧起手，手掌右移"
+    )
     fun label(key: String) = labels[canonical(key)] ?: key
     fun canonical(name: String) = when (name) {
         "Peace" -> "Victory"
