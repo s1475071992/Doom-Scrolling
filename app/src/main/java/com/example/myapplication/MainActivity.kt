@@ -597,15 +597,15 @@ fun MainScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 单指上翻：弯食指再伸直；下翻：先伸直再弯曲",
+                    text = "• 上翻：先握拳，再伸直食指或同时伸直食指、中指",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 双指上翻：两指半弯再伸直；下翻：两指伸直再弯下",
+                    text = "• 下翻：先伸直食指或两指，再向掌心弯曲",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 捏合后从画面相应侧边起手，沿指定方向移动",
+                    text = "• 捏合：任意位置起手，保持捏合再上下左右移动",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

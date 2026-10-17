@@ -22,18 +22,18 @@ object GestureCatalog {
         "None" to "未识别", "No_Gesture" to "未识别"
     )
     val startingPoses = mapOf(
-        "Index_Up" to "先弯曲食指，中指握紧；再伸直食指",
+        "Index_Up" to "先握拳，识别提示后只伸直食指",
         "Index_Down" to "先伸直食指，中指握紧；再弯下食指",
-        "Two_Up" to "食指、中指先半弯；再一起伸直",
+        "Two_Up" to "先握拳，识别提示后同时伸直食指和中指",
         "Two_Down" to "食指、中指先伸直；再一起弯下",
-        "Pinch1_Up" to "拇指与食指捏合，在画面下侧起手，手掌上移",
-        "Pinch1_Down" to "拇指与食指捏合，在画面上侧起手，手掌下移",
-        "Pinch1_Left" to "拇指与食指捏合，在画面右侧起手，手掌左移",
-        "Pinch1_Right" to "拇指与食指捏合，在画面左侧起手，手掌右移",
-        "Pinch2_Up" to "三指指尖汇聚，在画面下侧起手，手掌上移",
-        "Pinch2_Down" to "三指指尖汇聚，在画面上侧起手，手掌下移",
-        "Pinch2_Left" to "三指指尖汇聚，在画面右侧起手，手掌左移",
-        "Pinch2_Right" to "三指指尖汇聚，在画面左侧起手，手掌右移"
+        "Pinch1_Up" to "拇指＋食指捏合，保持捏合后向上移动手掌",
+        "Pinch1_Down" to "拇指＋食指捏合，保持捏合后向下移动手掌",
+        "Pinch1_Left" to "拇指＋食指捏合，保持捏合后向左移动手掌",
+        "Pinch1_Right" to "拇指＋食指捏合，保持捏合后向右移动手掌",
+        "Pinch2_Up" to "拇指＋食指＋中指汇聚，保持捏合后向上移动",
+        "Pinch2_Down" to "拇指＋食指＋中指汇聚，保持捏合后向下移动",
+        "Pinch2_Left" to "拇指＋食指＋中指汇聚，保持捏合后向左移动",
+        "Pinch2_Right" to "拇指＋食指＋中指汇聚，保持捏合后向右移动"
     )
     fun label(key: String) = labels[canonical(key)] ?: key
     fun canonical(name: String) = when (name) {
