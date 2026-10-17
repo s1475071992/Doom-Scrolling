@@ -40,6 +40,7 @@ class HandDetectionAnalyzer(
     private val busy = AtomicBoolean(false)
     private var lastTimeMs = 0L
     private var lastFrameAtMs = 0L
+    @Volatile private var lastHandAtMs = SystemClock.uptimeMillis()
     private var fpsWindowStart = 0L
     private var frameCount = 0
     private var measuredFps = 0f
@@ -80,9 +81,13 @@ class HandDetectionAnalyzer(
     }
 
     override fun analyze(imageProxy: ImageProxy) {
-        // Air mouse targets ~30 FPS, static poses ~18 FPS.
+        // Adaptive inference rate; the user-enabled camera stays on, with
+        // hand detection at low standby frequency to allow rapid wake-up.
         val now = SystemClock.uptimeMillis()
-        val minInterval = if (GestureRuntime.airMouse) 32L else 55L
+        val minInterval = RecognitionCadence.intervalMs(
+            GestureRuntime.airMouse, GestureRuntime.powerSaving,
+            now - lastHandAtMs
+        )
         if (now - lastFrameAtMs < minInterval || recognizer == null ||
             !busy.compareAndSet(false, true)) {
             imageProxy.close()
@@ -114,6 +119,7 @@ class HandDetectionAnalyzer(
         // The six released gestures and air-mouse use landmarks exclusively.
         // Do not allocate legacy geometry descriptors or run an optional TFLite
         // classifier on every frame: neither influences any mapped action.
+        lastHandAtMs = SystemClock.uptimeMillis()
         val p = hand.map { NormalizedPoint(it.x(), it.y(), it.z()) }
         val top = result.gestures().firstOrNull()?.firstOrNull()
         val topName = GestureCatalog.canonical(top?.categoryName() ?: "None")
