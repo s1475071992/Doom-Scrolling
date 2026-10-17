@@ -28,7 +28,6 @@ object GestureRuntime {
     fun init(context: Context) {
         val pref = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         airMouse = pref.getBoolean("air_mouse", false)
-        poseInProgress = false
         feedback = pref.getBoolean("feedback", true)
         powerSaving = pref.getBoolean("power_saving", true)
         accelerationMode = AccelerationMode.fromKey(pref.getString("ai_acceleration_mode", "auto"))
