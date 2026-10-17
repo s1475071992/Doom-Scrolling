@@ -7,6 +7,8 @@ import android.media.AudioAttributes
 import android.os.Build
 import android.os.IBinder
 import androidx.camera.core.*
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -26,6 +28,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
     private val gestureScrollController = GestureScrollController()
     private var isCameraBound = false
     private var cameraProvider: ProcessCameraProvider? = null
+    private var sensorFpsController: CameraSensorFpsController? = null
 
     interface StatusCallback {
         fun onStatusChanged(status: String)
@@ -104,6 +107,7 @@ class GestureDetectionService : Service(), LifecycleOwner {
         return START_NOT_STICKY
     }
 
+    @androidx.annotation.OptIn(markerClass = [ExperimentalCamera2Interop::class])
     private fun startBackgroundDetection() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -114,11 +118,15 @@ class GestureDetectionService : Service(), LifecycleOwner {
                 // Leave camera ownership in the FGS; only the recognizer's
                 // creation/method calls move to the single analysis executor.
                 provider.unbindAll()
-                val analysis = ImageAnalysis.Builder()
+                val builder = ImageAnalysis.Builder()
                     .setTargetResolution(android.util.Size(640, 480))
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
+                // Measures real Camera2 captured frames independently of model
+                // inference, including those dropped by the analyzer.
+                Camera2Interop.Extender(builder)
+                    .setSessionCaptureCallback(SensorCaptureFpsMonitor())
+                val analysis = builder.build()
 
                 cameraExecutor.execute {
                     // GPU delegates require initialization on their inference
@@ -138,10 +146,16 @@ class GestureDetectionService : Service(), LifecycleOwner {
                         }
                         try {
                             analysis.setAnalyzer(cameraExecutor, analyzer)
-                            provider.bindToLifecycle(
+                            val camera = provider.bindToLifecycle(
                                 this, CameraSelector.DEFAULT_FRONT_CAMERA, analysis
                             )
                             isCameraBound = true
+                            sensorFpsController = CameraSensorFpsController(
+                                camera, ContextCompat.getMainExecutor(this)
+                            )
+                            GestureRuntime.setCameraActiveListener { responding ->
+                                sensorFpsController?.requestActive(responding)
+                            }
                             updateStatus("摄像头识别运行中，可跨应用控制")
                         } catch (e: Exception) {
                             android.util.Log.e("GestureService", "Camera binding failed", e)
@@ -208,6 +222,9 @@ class GestureDetectionService : Service(), LifecycleOwner {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        GestureRuntime.setCameraActiveListener(null)
+        sensorFpsController?.close()
+        sensorFpsController = null
         active = false
         ScrollAccessibilityService.setEnabled(false)
         GestureDiagnostics.reset()

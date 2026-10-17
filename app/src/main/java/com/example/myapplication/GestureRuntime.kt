@@ -16,6 +16,10 @@ object GestureRuntime {
     // Updated by the dynamic-gesture state machine; never persisted.
     @Volatile var poseInProgress: Boolean = false
         private set
+    // The foreground camera service registers a listener while bound.
+    // The gesture state machine can immediately raise actual sensor FPS
+    // without waiting for the next 1 FPS standby frame.
+    @Volatile private var cameraActiveListener: ((Boolean) -> Unit)? = null
     @Volatile var feedback: Boolean = true
         private set
     @Volatile var powerSaving: Boolean = true
@@ -35,11 +39,20 @@ object GestureRuntime {
     }
 
     fun setPoseInProgress(active: Boolean) {
+        if (poseInProgress == active) return
         poseInProgress = active
+        cameraActiveListener?.invoke(airMouse || active)
+    }
+
+    fun setCameraActiveListener(listener: ((Boolean) -> Unit)?) {
+        cameraActiveListener = listener
+        listener?.invoke(airMouse || poseInProgress)
     }
 
     fun setAirMouse(context: Context, enabled: Boolean) {
+        val previous = airMouse
         airMouse = enabled
+        if (previous != enabled) cameraActiveListener?.invoke(enabled || poseInProgress)
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("air_mouse", enabled).apply()
         if (!enabled) ScrollAccessibilityService.getInstance()?.hideCursor()
@@ -80,7 +93,9 @@ object GestureDiagnostics {
         val state: String = "等待动作",
         val overlay: String = "尚未建立",
         val backend: String = "尚未启动",
-        val battery: String = "未采样"
+        val battery: String = "未采样",
+        val cameraFps: String = "未采样",
+        val cameraTarget: String = "尚未请求"
     )
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var publishedState = ""
@@ -110,6 +125,12 @@ object GestureDiagnostics {
     }
     fun battery(status: String) {
         main.post { if (current.battery != status) current = current.copy(battery = status) }
+    }
+    fun cameraCapturedFps(status: String) {
+        main.post { if (current.cameraFps != status) current = current.copy(cameraFps = status) }
+    }
+    fun cameraTarget(status: String) {
+        main.post { if (current.cameraTarget != status) current = current.copy(cameraTarget = status) }
     }
     fun backend(status: String) {
         main.post { if (current.backend != status) current = current.copy(backend = status) }

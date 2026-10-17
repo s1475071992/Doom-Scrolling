@@ -348,7 +348,9 @@ fun MainScreen(
             Column(Modifier.padding(14.dp)) {
                 Text("实时识别调试",
                     style = MaterialTheme.typography.titleMedium)
-                Text("识别帧率：" + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
+                Text("AI 模型推理 FPS：" + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
+                Text("摄像头实际采集：" + snapshot.cameraFps)
+                Text("摄像头帧率策略：" + snapshot.cameraTarget)
                 Text("识别手势：${snapshot.name}")
                 Text("置信度: " + String.format(java.util.Locale.US,
                     "%.0f%%", snapshot.confidence * 100f))
@@ -376,7 +378,7 @@ fun MainScreen(
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("智能省电")
-                Text("等待起手式时每秒识别 1 帧；检测到有效起手式后恢复约 15 帧（关闭省电约 18 帧），空鼠约 25 帧。摄像头本身仍持续开启。",
+                Text("等待起手式：AI 推理约 1 FPS，并请求摄像头最低支持帧率；起手式确认／空鼠自动恢复高帧率。实际摄像头 FPS 取决于驱动，在实时调试中显示。",
                     style = MaterialTheme.typography.bodySmall)
             }
             Switch(checked = powerSavingEnabled, onCheckedChange = {
