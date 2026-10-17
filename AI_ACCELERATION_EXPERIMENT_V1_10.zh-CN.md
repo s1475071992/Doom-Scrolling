@@ -40,3 +40,18 @@
 - https://developers.google.com/edge/mediapipe/solutions/vision/gesture_recognizer/android
 - https://developer.android.com/media/camera/camerax/analyze
 - https://ai.google.dev/edge/litert/android/npu
+
+## 2026-10-17：真实 NPU 集成进度（未通过双平台验收）
+
+CI 已下载官方手势模型并递归解包，取得 palm_detection.tflite 与 hand_landmark.tflite。新增基于 LiteRT 2.2 CompiledModel / BuiltinNpuAcceleratorProvider 的 `NpuSubmodelProbe`，支持调用 NPU 模型原生输入、输出并记录失败；同时增加需在真机运行的 `NpuSubmodelDeviceTest`。
+
+官方 v2.2.0 `litert_npu_runtime_libraries_jit.zip` 的 SHA-256 已固定验证。实际检查发现 **MediaTek 的 JIT 插件缺失**，脚本遇到缺失时明确提示 UNAVAILABLE，不会冒充已适配。测试 APK 仅尝试打包 Qualcomm HTP v75 版本的 LiteRT dispatch/compiler 插件；其它骁龙 HTP 类型需独立适配，QNN/HTP 设备运行库可能还须单独提供并检查再分发许可。
+
+**注意**：NPU 子模型运行器尚未取代 MediaPipe 的完整相机帧/掌心检测/跟踪/裁剪/21点后处理流水线。当前应用自动模式真正支持的是 MediaPipe GPU → CPU；**不能把这版 APK 称为天玑+骁龙 NPU 加速版**。即便 `CompiledModel.Options(NPU)` 初始化成功，也可能存在 CPU 运算部分，必须在实际芯片上抓取 NPU 负载/委托日志并执行 parity test。
+
+### 真机验证
+
+1. 用安装包附带的正式模型子文件与 NPU 运行库运行专用 `androidTest`。
+2. 测试 Snapdragon v75 和 MediaTek 芯片，确认 `NpuSubmodelDeviceTest` 的真实模型推理输出。
+3. 通过系统硬件性能分析工具确认真正 NPU 执行，不把只初始化成功、但回落 CPU 的结果计为通过。
+4. 只有在手掌/手指关键点流水线在两个平台全部跑通并通过手势、空鼠、发热对照测试后才合并到稳定版。
