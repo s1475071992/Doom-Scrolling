@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   push:
-    branches: [feature/full-gesture-controls]
+    branches: [main, feature/full-gesture-controls]
   pull_request:
     branches: [main]
   workflow_dispatch:
