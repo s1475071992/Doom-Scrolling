@@ -48,6 +48,7 @@ class HandDetectionAnalyzer(
     private var measuredFps = 0f
     private var lastDiagnosticsAt = 0L
     private var lastBatterySampleAt = 0L
+    private var lastNpuMetricsAt = 0L
     private var recognizer: GestureRecognizer? = null
     private var npuPipeline: NpuHandPipeline? = null
     @Volatile private var activeBackend: InferenceBackend? = null
@@ -57,6 +58,10 @@ class HandDetectionAnalyzer(
 
 
     init {
+        GestureDiagnostics.chipset(NpuSubmodelProbe.deviceLabel())
+        GestureDiagnostics.npuModels("暂无运行的 NPU 子模型")
+        GestureDiagnostics.assignmentEvidence("尚未选择后端")
+        GestureDiagnostics.fallbackReason("无")
         // The caller constructs this analyzer on cameraExecutor, NOT the
         // Android main thread. MediaPipe GPU's EGL context must be created
         // and used on the same single-thread executor.
@@ -65,7 +70,11 @@ class HandDetectionAnalyzer(
                 npuPipeline = NpuHandPipeline.create(context)
                 if (npuPipeline != null) {
                     activeBackend = InferenceBackend.NPU
-                    GestureDiagnostics.backend("NPU 实验执行中 · 硬件委托尚待证实")
+                    GestureDiagnostics.backend("NPU 实验路径 · LiteRT 请求 NPU")
+                    GestureDiagnostics.assignmentEvidence(
+                        "未验证：LiteRT 允许 CPU 部分或全部回退；需 QNN/HTP / MediaTek APU trace"
+                    )
+                    GestureDiagnostics.npuModels("两模型已初始化，尚未开始执行")
                 }
             } catch (e: Exception) {
                 Log.w("HandDetection", "Experimental NPU pipeline unavailable", e)
@@ -82,6 +91,10 @@ class HandDetectionAnalyzer(
                 GestureDiagnostics.backend(
                     if (backend == InferenceBackend.GPU) "GPU · MediaPipe"
                     else "CPU · MediaPipe（兼容/回退）"
+                )
+                GestureDiagnostics.assignmentEvidence(
+                    if (backend == InferenceBackend.GPU) "MediaPipe GPU Delegate 已创建；逐算子分配不可读取"
+                    else "MediaPipe CPU Delegate 已创建"
                 )
                 break
             } catch (e: Exception) {
@@ -149,6 +162,8 @@ class HandDetectionAnalyzer(
             recognizer = createRecognizer(InferenceBackend.CPU)
             activeBackend = InferenceBackend.CPU
             GestureDiagnostics.backend("CPU · GPU 出错后自动回退")
+            GestureDiagnostics.assignmentEvidence("CPU Delegate")
+            GestureDiagnostics.fallbackReason("MediaPipe GPU 回调报告错误")
         } catch (e: Exception) {
             Log.e("HandDetection", "CPU fallback also failed", e)
             activeBackend = null
@@ -158,6 +173,8 @@ class HandDetectionAnalyzer(
 
     private fun giveUpOnNpu(error: Exception) {
         Log.w("HandDetection", "NPU experimental pipeline failed, falling back", error)
+        GestureDiagnostics.fallbackReason("NPU 实验执行失败：${error.javaClass.simpleName}: ${error.message?.take(90) ?: ""}")
+        GestureDiagnostics.npuModels("实验执行失败，已停止 NPU 模型")
         try { npuPipeline?.close() } catch (e: Exception) {
             Log.w("HandDetection", "NPU close failed", e)
         }
@@ -168,6 +185,10 @@ class HandDetectionAnalyzer(
                 recognizer = createRecognizer(backend)
                 activeBackend = backend
                 GestureDiagnostics.backend("${backend.name} · NPU 实验失败后回退")
+                GestureDiagnostics.assignmentEvidence(
+                    if (backend == InferenceBackend.GPU) "MediaPipe GPU Delegate 已创建"
+                    else "MediaPipe CPU Delegate 已创建"
+                )
                 return
             } catch (e: Exception) {
                 Log.w("HandDetection", "NPU fallback failed on $backend", e)
@@ -215,6 +236,12 @@ class HandDetectionAnalyzer(
                 // Projection output uses the exact same gesture state machine.
                 try {
                     val points = pipeline.process(bitmap)
+                    val metricNow = SystemClock.uptimeMillis()
+                    if (metricNow - lastNpuMetricsAt >= 850L) {
+                        lastNpuMetricsAt = metricNow
+                        GestureDiagnostics.npuModels(pipeline.inferenceMetrics())
+                        Log.d("NpuSubmodel", pipeline.inferenceMetrics())
+                    }
                     if (points == null) {
                         recordFrame(SystemClock.uptimeMillis(), "None", 0f)
                         onHandsDetected(null)

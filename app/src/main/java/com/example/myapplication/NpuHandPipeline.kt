@@ -42,6 +42,9 @@ class NpuHandPipeline private constructor(
     private var trackedRoi: Roi? = null
     private var missing = 0
 
+    fun inferenceMetrics(): String =
+        "手掌模型：${palm.metrics().shortText()} · 关键点模型：${hand.metrics().shortText()}"
+
     companion object {
         fun create(context: Context): NpuHandPipeline? {
             val detector = NpuSubmodelProbe.create(context, "palm_detection.tflite") ?: return null

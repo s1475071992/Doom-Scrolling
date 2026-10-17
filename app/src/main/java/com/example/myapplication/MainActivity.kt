@@ -358,6 +358,11 @@ fun MainScreen(
                 Text("最后动作: ${snapshot.lastAction}")
                 Text("悬浮层: ${snapshot.overlay}")
                 Text("AI 推理后端: ${snapshot.backend}")
+                Text("芯片信息: ${snapshot.chipset}")
+                Text("模型执行统计: ${snapshot.npuModels}")
+                Text("硬件算子分配: ${snapshot.assignmentEvidence}")
+                Text("最近回退原因: ${snapshot.fallbackReason}")
+                Text("手势判断详情: ${snapshot.gestureTrace}")
                 Text("设备状态: ${snapshot.battery}")
                 if (isScrollingEnabledState.value) {
                     OutlinedButton(onClick = {

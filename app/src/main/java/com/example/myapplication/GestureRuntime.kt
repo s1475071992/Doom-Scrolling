@@ -95,11 +95,17 @@ object GestureDiagnostics {
         val backend: String = "尚未启动",
         val battery: String = "未采样",
         val cameraFps: String = "未采样",
-        val cameraTarget: String = "尚未请求"
+        val cameraTarget: String = "尚未请求",
+        val chipset: String = "待检测",
+        val npuModels: String = "未运行",
+        val assignmentEvidence: String = "未验证",
+        val fallbackReason: String = "无",
+        val gestureTrace: String = "等待关键点"
     )
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var publishedState = ""
     @Volatile private var publishedAction = ""
+    @Volatile private var lastTraceAtMs = 0L
     var current by mutableStateOf(Snapshot())
         private set
 
@@ -132,12 +138,35 @@ object GestureDiagnostics {
     fun cameraTarget(status: String) {
         main.post { if (current.cameraTarget != status) current = current.copy(cameraTarget = status) }
     }
+    fun chipset(status: String) {
+        main.post { if (current.chipset != status) current = current.copy(chipset = status) }
+    }
+    fun npuModels(status: String) {
+        main.post { if (current.npuModels != status) current = current.copy(npuModels = status) }
+    }
+    fun assignmentEvidence(status: String) {
+        main.post {
+            if (current.assignmentEvidence != status) {
+                current = current.copy(assignmentEvidence = status)
+            }
+        }
+    }
+    fun fallbackReason(status: String) {
+        main.post { if (current.fallbackReason != status) current = current.copy(fallbackReason = status) }
+    }
+    fun gestureTrace(status: String) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastTraceAtMs < 350L) return
+        lastTraceAtMs = now
+        main.post { if (current.gestureTrace != status) current = current.copy(gestureTrace = status) }
+    }
     fun backend(status: String) {
         main.post { if (current.backend != status) current = current.copy(backend = status) }
     }
     fun reset() {
         publishedState = ""
         publishedAction = ""
+        lastTraceAtMs = 0L
         main.post { current = Snapshot() }
     }
     fun text(): String = String.format(

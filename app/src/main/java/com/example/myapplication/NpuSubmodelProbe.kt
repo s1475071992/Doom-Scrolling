@@ -2,6 +2,8 @@ package com.example.myapplication
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
+import java.util.Locale
 import android.util.Log
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
@@ -24,10 +26,33 @@ class NpuSubmodelProbe private constructor(
     private val inputs: List<TensorBuffer>,
     private val outputs: List<TensorBuffer>
 ) : AutoCloseable {
+    data class RunMetrics(val count: Long, val averageMs: Double, val lastMs: Double) {
+        fun shortText(): String = String.format(
+            Locale.US, "%d次 · 均%.1fms · 最近%.1fms", count, averageMs, lastMs
+        )
+    }
+
+    private var runCount = 0L
+    private var totalRunNanos = 0L
+    private var lastRunNanos = 0L
+
+    fun metrics(): RunMetrics = RunMetrics(
+        runCount,
+        if (runCount > 0) totalRunNanos / runCount / 1_000_000.0 else 0.0,
+        lastRunNanos / 1_000_000.0
+    )
 
     companion object {
+        fun deviceLabel(): String =
+            if (Build.VERSION.SDK_INT >= 31)
+                "${Build.SOC_MANUFACTURER} / ${Build.SOC_MODEL} · ${Build.HARDWARE}"
+            else "${Build.MANUFACTURER} / ${Build.HARDWARE}"
+
+
         fun create(context: Context, assetName: String): NpuSubmodelProbe? {
+            GestureDiagnostics.chipset(deviceLabel())
             if (Build.VERSION.SDK_INT < 31 || !Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")) {
+                GestureDiagnostics.fallbackReason("Android 12 或 arm64 不满足 NPU 条件")
                 return null
             }
             val provider = try {
@@ -37,6 +62,7 @@ class NpuSubmodelProbe private constructor(
                 return null
             }
             if (!provider.isDeviceSupported() || !provider.isLibraryReady()) {
+                GestureDiagnostics.fallbackReason("NPU 提供程序/厂商运行库不可用")
                 Log.i("NpuSubmodel", "Vendor libraries not installed or SoC unsupported")
                 return null
             }
@@ -52,9 +78,13 @@ class NpuSubmodelProbe private constructor(
                 )
                 val inBuffers = compiled.createInputBuffers()
                 val outBuffers = compiled.createOutputBuffers()
+                Log.i("NpuSubmodel", "Requested NPU(+CPU fallback): $assetName, " +
+                    "supported=${provider.isDeviceSupported()}, " +
+                    "libReady=${provider.isLibraryReady()}. Delegate coverage NOT VERIFIED")
                 return NpuSubmodelProbe(env, compiled, inBuffers, outBuffers)
             } catch (e: Exception) {
                 Log.w("NpuSubmodel", "NPU submodel JIT compile failed: $assetName", e)
+                GestureDiagnostics.fallbackReason("$assetName 初始化失败: ${e.javaClass.simpleName}")
                 try { compiled?.close() } catch (_: Exception) { }
                 try { env?.close() } catch (_: Exception) { }
                 return null
@@ -70,7 +100,11 @@ class NpuSubmodelProbe private constructor(
     fun runPreprocessedFloat(input: FloatArray): List<FloatArray> {
         check(inputs.size == 1) { "Expected one tensor input" }
         inputs[0].writeFloat(input)
+        val start = SystemClock.elapsedRealtimeNanos()
         model.run(inputs, outputs)
+        lastRunNanos = SystemClock.elapsedRealtimeNanos() - start
+        totalRunNanos += lastRunNanos
+        runCount++
         return outputs.map { it.readFloat() }
     }
 
