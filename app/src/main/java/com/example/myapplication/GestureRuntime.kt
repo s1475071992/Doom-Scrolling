@@ -13,6 +13,9 @@ object GestureRuntime {
     private const val FILE = "gesture_runtime"
     @Volatile var airMouse: Boolean = false
         private set
+    // Updated by the dynamic-gesture state machine; never persisted.
+    @Volatile var poseInProgress: Boolean = false
+        private set
     @Volatile var feedback: Boolean = true
         private set
     @Volatile var powerSaving: Boolean = true
@@ -25,10 +28,15 @@ object GestureRuntime {
     fun init(context: Context) {
         val pref = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         airMouse = pref.getBoolean("air_mouse", false)
+        poseInProgress = false
         feedback = pref.getBoolean("feedback", true)
         powerSaving = pref.getBoolean("power_saving", true)
         accelerationMode = AccelerationMode.fromKey(pref.getString("ai_acceleration_mode", "auto"))
         experimentalNpu = pref.getBoolean("experimental_npu", false)
+    }
+
+    fun setPoseInProgress(active: Boolean) {
+        poseInProgress = active
     }
 
     fun setAirMouse(context: Context, enabled: Boolean) {

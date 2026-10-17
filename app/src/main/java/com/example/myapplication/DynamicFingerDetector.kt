@@ -133,6 +133,7 @@ class DynamicFingerDetector(
     }
 
     fun reset() {
+        GestureRuntime.setPoseInProgress(false)
         phase=Phase.IDLE
         start=null
         baseline=null
@@ -205,6 +206,9 @@ class DynamicFingerDetector(
                 startedAt=now
                 stableFrames=1
                 phase=Phase.CONFIRMING
+                // The analyzer now samples at full gesture cadence until
+                // we either confirm this pose or reset to waiting mode.
+                GestureRuntime.setPoseInProgress(true)
                 // 减少误触：候选起手式不再立即弹窗。
             }
             return null

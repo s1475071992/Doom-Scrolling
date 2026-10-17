@@ -45,6 +45,18 @@ class DynamicFingerDetectorTest {
         return d.process(p,810L)
     }
 
+    @Test fun poseCandidateWakesInferenceAndResetReturnsToOneFps() {
+        val d = detector()
+        d.reset()
+        assertFalse(GestureRuntime.poseInProgress)
+        assertNull(d.process(pose(indexExtended = true), 100L))
+        assertTrue("检测到候选起手式后必须提高推理帧率", GestureRuntime.poseInProgress)
+        assertEquals(68L, RecognitionCadence.intervalMs(false, true, GestureRuntime.poseInProgress))
+        d.reset()
+        assertFalse(GestureRuntime.poseInProgress)
+        assertEquals(1000L, RecognitionCadence.intervalMs(false, true, GestureRuntime.poseInProgress))
+    }
+
     @Test fun fistShowsHintOnlyAfterStableAndThenUp() {
         val hints=mutableListOf<String>()
         val d=detector(hints)

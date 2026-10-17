@@ -41,6 +41,7 @@ class HandDetectionAnalyzer(
     private val busy = AtomicBoolean(false)
     private var lastTimeMs = 0L
     private var lastFrameAtMs = 0L
+    private var lastPoseActivityAtMs = 0L
     @Volatile private var lastHandAtMs = SystemClock.uptimeMillis()
     private var fpsWindowStart = 0L
     private var frameCount = 0
@@ -188,9 +189,16 @@ class HandDetectionAnalyzer(
             val level = batt.level?.let { "$it%" } ?: "未知"
             GestureDiagnostics.battery("电池 $temp · 电量 $level（非芯片温度）")
         }
+        // While awaiting a starting pose, 1 model inference per second.
+        // The first viable pose switches the detector into CONFIRMING and
+        // immediately unlocks fast inference. Retain a short grace window
+        // after an interrupted pose to avoid oscillating to 1 FPS on jitter.
+        if (GestureRuntime.poseInProgress) lastPoseActivityAtMs = now
+        val needsFastRecognition = GestureRuntime.poseInProgress ||
+            (lastPoseActivityAtMs != 0L && now - lastPoseActivityAtMs < 700L)
         val minInterval = RecognitionCadence.intervalMs(
             GestureRuntime.airMouse, GestureRuntime.powerSaving,
-            now - lastHandAtMs
+            needsFastRecognition
         )
         if (now - lastFrameAtMs < minInterval ||
             (recognizer == null && npuPipeline == null) ||

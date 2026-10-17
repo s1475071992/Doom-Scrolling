@@ -5,19 +5,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RecognitionCadenceTest {
-    @Test fun standbyAndWakeup() {
-        assertEquals(68L, RecognitionCadence.intervalMs(false,true,0L))
-        assertEquals(68L, RecognitionCadence.intervalMs(false,true,2500L))
-        assertEquals(125L, RecognitionCadence.intervalMs(false,true,2501L))
-        assertEquals(68L, RecognitionCadence.intervalMs(false,true,100L))
+    @Test fun waitingPoseAlwaysUsesOneFps() {
+        assertEquals(1000L, RecognitionCadence.intervalMs(false, true, false))
+        assertEquals(1000L, RecognitionCadence.intervalMs(false, false, false))
     }
-    @Test fun airMouseRemainsSmooth() {
-        assertEquals(40L, RecognitionCadence.intervalMs(true,true,120_000L))
-        assertEquals(32L, RecognitionCadence.intervalMs(true,false,120_000L))
+
+    @Test fun firstCandidateWakesHigherRecognitionRate() {
+        assertEquals(68L, RecognitionCadence.intervalMs(false, true, true))
+        assertEquals(55L, RecognitionCadence.intervalMs(false, false, true))
+        assertTrue(RecognitionCadence.intervalMs(false, true, false) >
+            RecognitionCadence.intervalMs(false, true, true))
     }
-    @Test fun offSwitchRestoresFrameRate() {
-        assertEquals(55L, RecognitionCadence.intervalMs(false,false,120_000L))
-        assertTrue(RecognitionCadence.intervalMs(false,true,120_000L) >
-            RecognitionCadence.intervalMs(false,false,120_000L))
+
+    @Test fun airMouseRemainsSmoothEvenWhenNoGesturePoseIsArmed() {
+        assertEquals(40L, RecognitionCadence.intervalMs(true, true, false))
+        assertEquals(32L, RecognitionCadence.intervalMs(true, false, false))
+        assertEquals(40L, RecognitionCadence.intervalMs(true, true, true))
     }
 }
