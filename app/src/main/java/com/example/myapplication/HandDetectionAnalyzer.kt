@@ -8,6 +8,7 @@ import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.gesturerecognizer.GestureRecognizer
 import com.google.mediapipe.tasks.vision.gesturerecognizer.GestureRecognizerResult
@@ -46,43 +47,105 @@ class HandDetectionAnalyzer(
     private var measuredFps = 0f
     private var lastDiagnosticsAt = 0L
     private var recognizer: GestureRecognizer? = null
+    @Volatile private var activeBackend: InferenceBackend? = null
+    @Volatile private var gpuRuntimeFailed = false
+
+    fun isReady(): Boolean = recognizer != null
+
 
     init {
-        try {
-            val options = GestureRecognizer.GestureRecognizerOptions.builder()
-                .setBaseOptions(
-                    BaseOptions.builder().setModelAssetPath("gesture_recognizer.task").build()
+        // The caller constructs this analyzer on cameraExecutor, NOT the
+        // Android main thread. MediaPipe GPU's EGL context must be created
+        // and used on the same single-thread executor.
+        for (backend in AccelerationPolicy.candidates(GestureRuntime.accelerationMode)) {
+            if (backend == InferenceBackend.NPU) {
+                // Not installed: never claim NPU acceleration from SoC name.
+                continue
+            }
+            try {
+                recognizer = createRecognizer(backend)
+                activeBackend = backend
+                GestureDiagnostics.backend(
+                    if (backend == InferenceBackend.GPU) "GPU · MediaPipe"
+                    else "CPU · MediaPipe（兼容/回退）"
                 )
-                .setRunningMode(RunningMode.LIVE_STREAM)
-                .setNumHands(1)
-                .setMinHandDetectionConfidence(.5f)
-                .setMinHandPresenceConfidence(.5f)
-                .setMinTrackingConfidence(.5f)
-                .setResultListener { result: GestureRecognizerResult, image: MPImage ->
-                    try {
-                        handle(result)
-                    } catch (e: Exception) {
-                        Log.e("HandDetection", "Failed to process gesture", e)
-                        onHandsDetected(null)
-                    } finally {
-                        image.close()
-                        busy.set(false)
-                    }
-                }
-                .setErrorListener { error ->
-                    Log.e("HandDetection", "MediaPipe error", error)
+                break
+            } catch (e: Exception) {
+                Log.w("HandDetection", "$backend initialization failed", e)
+            }
+        }
+        if (recognizer == null) {
+            Log.e("HandDetection", "Both GPU and CPU failed to initialize")
+            GestureDiagnostics.backend("识别引擎初始化失败")
+        }
+    }
+
+    private fun createRecognizer(backend: InferenceBackend): GestureRecognizer {
+        // These delegates belong to MediaPipe Tasks, not a LiteRT NPU backend.
+        val delegate = when (backend) {
+            InferenceBackend.GPU -> Delegate.GPU
+            InferenceBackend.CPU -> Delegate.CPU
+            InferenceBackend.NPU -> error("NPU runner is not integrated or validated")
+        }
+        val options = GestureRecognizer.GestureRecognizerOptions.builder()
+            .setBaseOptions(
+                BaseOptions.builder()
+                    .setModelAssetPath("gesture_recognizer.task")
+                    .setDelegate(delegate)
+                    .build()
+            )
+            .setRunningMode(RunningMode.LIVE_STREAM)
+            .setNumHands(1)
+            .setMinHandDetectionConfidence(.5f)
+            .setMinHandPresenceConfidence(.5f)
+            .setMinTrackingConfidence(.5f)
+            .setResultListener { result: GestureRecognizerResult, image: MPImage ->
+                try {
+                    handle(result)
+                } catch (e: Exception) {
+                    Log.e("HandDetection", "Failed to process gesture", e)
+                    onHandsDetected(null)
+                } finally {
+                    image.close()
                     busy.set(false)
                 }
-                .build()
-            recognizer = GestureRecognizer.createFromOptions(context, options)
+            }
+            .setErrorListener { error ->
+                Log.e("HandDetection", "MediaPipe inference error", error)
+                if (activeBackend == InferenceBackend.GPU) gpuRuntimeFailed = true
+                onHandsDetected(null)
+                busy.set(false)
+            }
+            .build()
+        return GestureRecognizer.createFromOptions(context, options)
+    }
+
+    private fun fallbackToCpuAfterGpuFailure() {
+        // Called from the same cameraExecutor thread used to construct GPU.
+        if (!gpuRuntimeFailed || activeBackend != InferenceBackend.GPU) return
+        gpuRuntimeFailed = false
+        val old = recognizer
+        recognizer = null
+        try {
+            old?.close()
         } catch (e: Exception) {
-            Log.e("HandDetection", "Missing or invalid gesture_recognizer.task", e)
+            Log.w("HandDetection", "GPU cleanup failed", e)
+        }
+        try {
+            recognizer = createRecognizer(InferenceBackend.CPU)
+            activeBackend = InferenceBackend.CPU
+            GestureDiagnostics.backend("CPU · GPU 出错后自动回退")
+        } catch (e: Exception) {
+            Log.e("HandDetection", "CPU fallback also failed", e)
+            activeBackend = null
+            GestureDiagnostics.backend("GPU/CPU 初始化均失败")
         }
     }
 
     override fun analyze(imageProxy: ImageProxy) {
         // Adaptive inference rate; the user-enabled camera stays on, with
         // hand detection at low standby frequency to allow rapid wake-up.
+        fallbackToCpuAfterGpuFailure()
         val now = SystemClock.uptimeMillis()
         val minInterval = RecognitionCadence.intervalMs(
             GestureRuntime.airMouse, GestureRuntime.powerSaving,
@@ -169,7 +232,10 @@ class HandDetectionAnalyzer(
     }
 
     fun release() {
+        // Always call on cameraExecutor, never the main thread.
         recognizer?.close()
         recognizer = null
+        activeBackend = null
+        busy.set(false)
     }
 }

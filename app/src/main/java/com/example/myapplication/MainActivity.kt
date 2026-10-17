@@ -355,6 +355,7 @@ fun MainScreen(
                 Text("状态: ${snapshot.state}")
                 Text("最后动作: ${snapshot.lastAction}")
                 Text("悬浮层: ${snapshot.overlay}")
+                Text("AI 推理后端: ${snapshot.backend}")
                 if (isScrollingEnabledState.value) {
                     OutlinedButton(onClick = {
                         val service = ScrollAccessibilityService.getInstance()
@@ -381,6 +382,45 @@ fun MainScreen(
                 powerSavingEnabled = it
                 GestureRuntime.setPowerSaving(context, it)
             })
+        }
+
+        var accelerationMode by remember {
+            mutableStateOf(GestureRuntime.accelerationMode)
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("AI 加速模式 · 实验版",
+                    style = MaterialTheme.typography.titleMedium)
+                for (mode in AccelerationMode.entries) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        RadioButton(
+                            selected = accelerationMode == mode,
+                            onClick = {
+                                accelerationMode = mode
+                                GestureRuntime.setAccelerationMode(context, mode)
+                            }
+                        )
+                        Text(mode.title, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "当前 NPU 引擎尚未完成芯片与模型验证：自动模式实际尝试 GPU → CPU。" +
+                        "系统摄像头采集和颜色转换不能直接交给 NPU。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    if (isScrollingEnabledState.value)
+                        "切换模式后，关闭并重新开启手势识别才会生效。"
+                    else "下次开启识别时生效。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
 
         var feedbackEnabled by remember { mutableStateOf(GestureRuntime.feedback) }

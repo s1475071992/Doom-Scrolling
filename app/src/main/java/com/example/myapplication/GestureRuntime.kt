@@ -17,12 +17,15 @@ object GestureRuntime {
         private set
     @Volatile var powerSaving: Boolean = true
         private set
+    @Volatile var accelerationMode: AccelerationMode = AccelerationMode.AUTO
+        private set
 
     fun init(context: Context) {
         val pref = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         airMouse = pref.getBoolean("air_mouse", false)
         feedback = pref.getBoolean("feedback", true)
         powerSaving = pref.getBoolean("power_saving", true)
+        accelerationMode = AccelerationMode.fromKey(pref.getString("ai_acceleration_mode", "auto"))
     }
 
     fun setAirMouse(context: Context, enabled: Boolean) {
@@ -36,6 +39,12 @@ object GestureRuntime {
         powerSaving = enabled
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("power_saving", enabled).apply()
+    }
+
+    fun setAccelerationMode(context: Context, mode: AccelerationMode) {
+        accelerationMode = mode
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString("ai_acceleration_mode", mode.key).apply()
     }
 
     fun setFeedback(context: Context, enabled: Boolean) {
@@ -53,7 +62,8 @@ object GestureDiagnostics {
         val confidence: Float = 0f,
         val lastAction: String = "—",
         val state: String = "等待动作",
-        val overlay: String = "尚未建立"
+        val overlay: String = "尚未建立",
+        val backend: String = "尚未启动"
     )
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var publishedState = ""
@@ -80,6 +90,9 @@ object GestureDiagnostics {
     }
     fun overlay(status: String) {
         main.post { current = current.copy(overlay = status) }
+    }
+    fun backend(status: String) {
+        main.post { if (current.backend != status) current = current.copy(backend = status) }
     }
     fun reset() {
         publishedState = ""
