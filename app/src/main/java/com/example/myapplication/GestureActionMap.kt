@@ -40,7 +40,13 @@ object GestureActionMap {
         "Two_Up" to SCROLL_UP,
         "Two_Down" to SCROLL_DOWN,
         "Pinch1_Up" to SCROLL_UP,
-        "Pinch1_Down" to SCROLL_DOWN
+        "Pinch1_Down" to SCROLL_DOWN,
+        "Pinch1_Left" to SWIPE_LEFT,
+        "Pinch1_Right" to SWIPE_RIGHT,
+        "Pinch2_Up" to SCROLL_UP,
+        "Pinch2_Down" to SCROLL_DOWN,
+        "Pinch2_Left" to SWIPE_LEFT,
+        "Pinch2_Right" to SWIPE_RIGHT
     )
     private const val FILE = "our_gesture_action_map"
     private const val KEY = "mappings"

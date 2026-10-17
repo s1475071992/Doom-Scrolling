@@ -593,19 +593,19 @@ fun MainScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "• 将食指或食指、中指放在前置摄像头前",
+                    text = "• 先在镜头前摆出规定起手式，系统会显示中文提示",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 手指实际上翻、下翻才能触发翻页",
+                    text = "• 单指上翻：弯食指再伸直；下翻：先伸直再弯曲",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 单指或双指捏合后，手掌向上下左右移动",
+                    text = "• 双指上翻：两指半弯再伸直；下翻：两指伸直再弯下",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "• 松开或恢复初始姿势后才能再次触发",
+                    text = "• 捏合后从画面相应侧边起手，沿指定方向移动",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

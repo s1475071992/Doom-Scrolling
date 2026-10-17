@@ -22,7 +22,7 @@ class GestureMappingActivity : ComponentActivity() {
                     Column(Modifier.fillMaxSize().padding(insets).padding(16.dp)) {
                         Text("动作手势映射",
                             style = MaterialTheme.typography.headlineSmall)
-                        Text("只有手指上翻、下翻或捏合移动时才触发操作；静止手形不会触发。",
+                        Text("先做出下方规定的起手式，识别到后会显示悬浮提醒；完成方向动作才执行操作。",
                             style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.height(12.dp))
                         val names = remember {
@@ -42,7 +42,10 @@ class GestureMappingActivity : ComponentActivity() {
                                 }
                                 var expanded by remember { mutableStateOf(false) }
                                 Card(Modifier.fillMaxWidth()) {
-                                    Row(Modifier.fillMaxWidth().padding(12.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                                    Text(GestureCatalog.startingPoses[name] ?: "先摆出起手式，再做方向动作",
+                                        style = MaterialTheme.typography.bodySmall)
+                                    Row(Modifier.fillMaxWidth()) {
                                         Text(GestureCatalog.label(name),
                                             modifier = Modifier.weight(1f),
                                             style = MaterialTheme.typography.bodyMedium)
@@ -61,6 +64,7 @@ class GestureMappingActivity : ComponentActivity() {
                                                 }
                                             }
                                         }
+                                    }
                                     }
                                 }
                             }

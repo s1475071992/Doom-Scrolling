@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   push:
-    branches: [main, feature/zh-dynamic-finger-drag-v14]
+    branches: [main, fix/start-pose-prompts-and-gesture-detection-v15]
   pull_request:
     branches: [main]
   workflow_dispatch:
