@@ -21,7 +21,7 @@ class HandDetectionAnalyzer(
     context: Context,
     private val onHandsDetected: (HandGesture?) -> Unit
 ) : ImageAnalysis.Analyzer {
-    data class NormalizedPoint(val x: Float, val y: Float)
+    data class NormalizedPoint(val x: Float, val y: Float, val z: Float = 0f)
     data class IndexFingerPosition(val x: Float, val y: Float)
     data class HandGesture(
         val isFiveFingersOpen: Boolean,
@@ -153,7 +153,7 @@ class HandDetectionAnalyzer(
             pinchRatio = pinchRatio,
             indexFingerAngleDeg = angle,
             indexFingerPosition = IndexFingerPosition(p[8].x, p[8].y),
-            landmarks = p.map { NormalizedPoint(it.x, it.y) },
+            landmarks = p.map { NormalizedPoint(it.x, it.y, it.z) },
             gestureName = name,
             confidence = confidence
         ))
