@@ -16,11 +16,23 @@ object GestureActionRouter {
     private val handler = Handler(Looper.getMainLooper())
     private var busy = false
 
+    fun clickCursor() {
+        val service = ScrollAccessibilityService.getInstance() ?: return
+        service.clickCursor()
+        GestureDiagnostics.action("Air mouse click")
+        if (GestureRuntime.feedback) service.showGestureFeedback("👆 鼠标点击")
+    }
+
     fun dispatch(name: String) {
         handler.post {
             val service = ScrollAccessibilityService.getInstance() ?: return@post
             if (!ScrollAccessibilityService.isEnabled()) return@post
-            when (val action = GestureActionMap.actionFor(service, name)) {
+            val action = GestureActionMap.actionFor(service, name)
+            if (action != GestureActionMap.NONE) {
+                GestureDiagnostics.action("$name → $action")
+                service.showGestureFeedback("${GestureCatalog.labels[name] ?: name} → $action")
+            }
+            when (action) {
                 GestureActionMap.NONE -> Unit
                 GestureActionMap.SCROLL_DOWN -> ScrollAccessibilityService.performScroll(850)
                 GestureActionMap.SCROLL_UP -> ScrollAccessibilityService.performScroll(-850)

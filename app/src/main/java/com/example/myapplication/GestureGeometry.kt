@@ -21,9 +21,6 @@ object GestureGeometry {
             ok && middle && ring && pinky -> "OK" to .84f
             thumb && !index && !middle && !ring && pinky -> "Shaka" to .82f
             thumb && index && !middle && !ring && !pinky -> "L_Shape" to .82f
-            !thumb && index && middle && !ring && !pinky -> "Peace" to .81f
-            !index && !middle && !ring && !pinky -> "Fist" to .79f
-            thumb && index && middle && ring && pinky -> "Open_Palm" to .80f
             else -> null
         }
     }

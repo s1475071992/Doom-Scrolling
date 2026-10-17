@@ -33,7 +33,7 @@ class GestureMappingActivity : ComponentActivity() {
                                 (0 until a.length()).map { a.getString(it) }
                                     .filterNot { it == "None" || it == "No_Gesture" }
                             } catch (_: Exception) { emptyList() }
-                            (GestureCatalog.known + customLabels).distinct()
+                            (GestureCatalog.known + customLabels.map { GestureCatalog.canonical(it) }).distinct()
                         }
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(names) { name ->

@@ -19,6 +19,8 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -73,7 +75,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+        GestureRuntime.init(this)
+
         // Load persisted state
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _isScrollingEnabledPersisted.value =
@@ -198,6 +201,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (_isScrollingEnabledPersisted.value && !GestureDetectionService.isRunning()) {
+            _isScrollingEnabledPersisted.value = false
+            _scrollStatus.value = "Gesture service stopped — tap Enable again."
+        }
 
         // The Activity must never reopen the camera while our FGS owns it.
         if (!_isScrollingEnabledPersisted.value &&
@@ -348,6 +355,7 @@ fun MainScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -385,6 +393,47 @@ fun MainScreen(
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
+        }
+
+        // Debug telemetry, updated on main thread from the service.
+        val snapshot = GestureDiagnostics.current
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("识别调试 / Live diagnostics",
+                    style = MaterialTheme.typography.titleMedium)
+                Text("FPS: " + String.format(java.util.Locale.US, "%.1f", snapshot.fps))
+                Text("手势: ${snapshot.name}")
+                Text("置信度: " + String.format(java.util.Locale.US,
+                    "%.0f%%", snapshot.confidence * 100f))
+                Text("状态: ${snapshot.state}")
+                Text("最后动作: ${snapshot.lastAction}")
+            }
+        }
+
+        var feedbackEnabled by remember { mutableStateOf(GestureRuntime.feedback) }
+        Row(modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("跨 App 手势触发提示")
+            Switch(checked = feedbackEnabled, onCheckedChange = {
+                feedbackEnabled = it
+                GestureRuntime.setFeedback(context, it)
+            })
+        }
+
+        var airMouseEnabled by remember { mutableStateOf(GestureRuntime.airMouse) }
+        Row(modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("实验性空鼠 / Air Mouse")
+                Text("食指控制光标，拇指＋食指捏合点击",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = airMouseEnabled, onCheckedChange = {
+                airMouseEnabled = it
+                GestureRuntime.setAirMouse(context, it)
+            })
         }
 
         // Permissions
