@@ -31,7 +31,7 @@ class DynamicFingerDetectorTest {
     }
 
     private fun detector(hints:MutableList<String> = mutableListOf()) =
-        DynamicFingerDetector(hint={hints.add(it)},state={})
+        DynamicFingerDetector(hint={hints.add(it)},state={},trace={})
 
     private fun arm(d:DynamicFingerDetector,p:List<HandDetectionAnalyzer.NormalizedPoint>) {
         listOf(100L,220L,340L,440L,560L).forEach { t ->
