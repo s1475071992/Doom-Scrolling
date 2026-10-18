@@ -6,10 +6,11 @@ import kotlin.math.acos
 import kotlin.math.hypot
 
 /**
- * 六种动态动作、三种互斥起手式：
+ * 八种动态动作、四种互斥起手式：
  * 1. 握拳 -> 只伸直食指：食指上翻。
  * 2. 食指伸直、其他三指收拢 -> 弯下食指：食指下翻。
  * 3. 食指＋中指伸直、另外两指收拢 -> 整只手移动：上下左右四方向。
+ * 4. 张掌 -> 握拳：单击；握拳 -> 张掌：双击。
  *
  * 先稳定保持起手式，再移动。静态姿势绝不直接执行。
  * 空鼠有自己独立的捏合检测，不经过本类。
@@ -24,7 +25,7 @@ class DynamicFingerDetector(
     private val trace: (String) -> Unit = { GestureDiagnostics.gestureTrace(it) }
 ) {
     private enum class Phase { IDLE, CONFIRMING, ARMED, FIRED }
-    private enum class Start { FIST, INDEX_DOWN, TWO_MOVE }
+    private enum class Start { FIST, INDEX_DOWN, TWO_MOVE, OPEN_PALM }
     private data class Frame(
         val index: Float, val middle: Float, val ring: Float, val little: Float,
         val x: Float, val y: Float, val palmWidth: Float,
@@ -50,6 +51,7 @@ class DynamicFingerDetector(
     private var lostTwoFrames = 0
     private var confirmingMisses = 0
     private var candidateMisses = 0
+    private var firedEvent: String? = null
 
     private val settleMs = 440L
     private val stableFrameCount = 5
@@ -120,6 +122,11 @@ class DynamicFingerDetector(
         // 先区分握拳、独立食指、双指伸直，不再检测任何捏合。
         val indexOpen=f.index>.76f || f.indexForward
         val middleOpen=f.middle>.74f || f.middleForward
+        // Evaluate open palm before two fingers. Both remaining fingers
+        // must be clearly extended; a V gesture must never trigger a click.
+        if (indexOpen && middleOpen && f.ring>.77f && f.little>.77f) {
+            return Start.OPEN_PALM
+        }
         // NPU points fluctuate around these boundaries. For V-pose only,
         // accept a slightly softer extension threshold; ring/pinky must
         // still be bent, so four open fingers never become a V gesture.
@@ -142,6 +149,7 @@ class DynamicFingerDetector(
         Start.FIST -> "握拳：准备伸直食指（食指上翻）"
         Start.INDEX_DOWN -> "食指伸直：准备弯下食指（食指下翻）"
         Start.TWO_MOVE -> "食指、中指伸直：准备向上下左右移动手掌"
+        Start.OPEN_PALM -> "张掌：准备握拳单击"
     }
 
     fun reset() {
@@ -160,6 +168,7 @@ class DynamicFingerDetector(
         lostTwoFrames=0
         confirmingMisses=0
         candidateMisses=0
+        firedEvent=null
     }
 
     fun clear() {
@@ -189,6 +198,7 @@ class DynamicFingerDetector(
         candidateFrames++
         if(candidateFrames<3 || now-candidateAt<120L) return null
         phase=Phase.FIRED
+        firedEvent=event
         lastFireAt=now
         releasedAt=0L
         state("动作完成："+GestureCatalog.label(event))
@@ -213,7 +223,11 @@ class DynamicFingerDetector(
         if(phase==Phase.FIRED) {
             // 同一次保持姿势/移动只能触发一次；需离开原起手状态才可重新准备。
             val off=when(start) {
-                Start.FIST -> actualPose==Start.FIST
+                // For palm/fist click gestures, holding the destination
+                // posture allows the opposite change to be armed next.
+                Start.FIST -> if(firedEvent=="Fist_To_Palm")
+                    actualPose==Start.OPEN_PALM else actualPose==Start.FIST
+                Start.OPEN_PALM -> actualPose==Start.FIST
                 Start.INDEX_DOWN -> actualPose==Start.INDEX_DOWN
                 Start.TWO_MOVE -> actualPose!=Start.TWO_MOVE
                 null -> true
@@ -275,11 +289,13 @@ class DynamicFingerDetector(
                     Start.FIST -> "✊"
                     Start.INDEX_DOWN -> "☝️"
                     Start.TWO_MOVE -> "✌️"
+                    Start.OPEN_PALM -> "✋"
                 })
                 state(when(s) {
                     Start.FIST -> "握拳起手式已确认"
                     Start.INDEX_DOWN -> "食指起手式已确认"
                     Start.TWO_MOVE -> "双指起手式已确认"
+                    Start.OPEN_PALM -> "张掌起手式已确认"
                 })
             }
             return null
@@ -292,7 +308,8 @@ class DynamicFingerDetector(
         val origin=baseline ?: return null
         val event=when(s) {
             Start.FIST ->
-                if((current.index>.77f || current.indexForward) &&
+                if(actualPose==Start.OPEN_PALM) "Fist_To_Palm"
+                else if((current.index>.77f || current.indexForward) &&
                     (current.index-origin.index>.21f || current.indexForward) &&
                     current.middle<.66f && !current.middleForward &&
                     current.ring<.72f && current.little<.72f)
@@ -303,6 +320,8 @@ class DynamicFingerDetector(
                     current.middle<.72f && !current.middleForward &&
                     current.ring<.72f && current.little<.72f)
                     "Index_Down" else null
+            Start.OPEN_PALM ->
+                if(actualPose==Start.FIST) "Palm_To_Fist" else null
             Start.TWO_MOVE -> {
                 // 短暂的手指遮挡不立即丢失准备状态；连续丢失则重新确认。
                 if(actualPose!=Start.TWO_MOVE) {
