@@ -597,6 +597,14 @@ fun MainScreen(
                     text = "• 双指移动：食指、中指伸直，确认后向上下左右移动整只手",
                     style = MaterialTheme.typography.bodyMedium
                 )
+                Text(
+                    text = "• 单击：先张掌，看到 ✋ 后握拳；默认点击屏幕中心",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "• 双击：先握拳，看到 ✊ 后张掌；默认双击屏幕中心",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
     }

@@ -1,0 +1,88 @@
+name: Publish Doom-Scrolling v1.10.1
+
+# This one-time release workflow is introduced by the release PR.
+# Future main updates do not automatically publish a new release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-v1.10.1.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-v1.10.1
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify, build and publish APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Ensure Android SDK 36
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+      - name: Download official hand model and extract submodels
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 3 -o app/src/main/assets/gesture_recognizer.task \
+            https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
+          test -s app/src/main/assets/gesture_recognizer.task
+          python3 -m unittest discover -s tools/tests -v
+          python3 tools/extract_mediapipe_submodels.py app/src/main/assets/gesture_recognizer.task app/src/main/assets
+      - name: Validate version and build release APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -F 'versionName = "1.10.1"' app/build.gradle.kts
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+      - name: Validate package, signing and vendor models
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          unzip -Z1 "$APK" > /tmp/release_apk_contents.txt
+          grep -F 'assets/gesture_recognizer.task' /tmp/release_apk_contents.txt
+          grep -F 'assets/palm_detection.tflite' /tmp/release_apk_contents.txt
+          grep -F 'assets/hand_landmark.tflite' /tmp/release_apk_contents.txt
+          grep -F 'lib/arm64-v8a/libLiteRtDispatch_MediaTek.so' /tmp/release_apk_contents.txt
+          grep -F 'lib/arm64-v8a/libLiteRtDispatch_Qualcomm.so' /tmp/release_apk_contents.txt
+          mkdir -p release-out
+          cp "$APK" release-out/Doom-Scrolling-v1.10.1-release.apk
+          (cd release-out && sha256sum Doom-Scrolling-v1.10.1-release.apk > SHA256SUMS.txt)
+      - name: Create public GitHub Release and attach APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: s1475071992/Doom-Scrolling
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v1.10.1 >/dev/null 2>&1; then
+            echo 'v1.10.1 already published; leave existing release unchanged.'
+            exit 0
+          fi
+          gh release create v1.10.1 \
+            release-out/Doom-Scrolling-v1.10.1-release.apk \
+            release-out/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title 'Doom-Scrolling v1.10.1' \
+            --notes-file RELEASE_NOTES_v1.10.1.md \
+            --latest

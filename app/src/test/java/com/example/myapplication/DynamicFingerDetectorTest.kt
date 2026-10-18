@@ -126,7 +126,7 @@ class DynamicFingerDetectorTest {
     }
 
     @Test fun noObsoleteGestureNames() {
-        assertEquals(6,GestureCatalog.known.size)
+        assertEquals(8,GestureCatalog.known.size)
         assertFalse(GestureCatalog.known.any {
             it.startsWith("Pinch") || it=="Two_Up" || it=="Two_Down"
         })
@@ -241,7 +241,8 @@ class DynamicFingerDetectorTest {
         for (now in listOf(100L, 220L, 340L, 440L, 560L)) {
             assertNull(d.process(open, now))
         }
-        assertTrue("four extended fingers must not arm V-pose", hints.isEmpty())
+        assertTrue("four extended fingers must not arm V-pose", "✌️" !in hints)
+        assertEquals("✋", hints.single())
     }
     @Test fun npuJitterBetweenDirectionSamplesStillTriggersFourDirections() {
         val directions = listOf(
@@ -263,6 +264,74 @@ class DynamicFingerDetectorTest {
             assertNull(d.process(moved, 810L))
             assertEquals(event, d.process(moved, 900L))
         }
+    }
+
+    private fun openPalm(dx: Float = 0f, dy: Float = 0f):
+        List<HandDetectionAnalyzer.NormalizedPoint> {
+        val p=pose(indexExtended=true,middleExtended=true,deltaX=dx,deltaY=dy).toMutableList()
+        fun pt(x:Float,y:Float)=HandDetectionAnalyzer.NormalizedPoint(x+dx,y+dy)
+        p[14]=pt(.63f,.44f)
+        p[16]=pt(.63f,.21f)
+        p[18]=pt(.67f,.44f)
+        p[20]=pt(.67f,.22f)
+        return p
+    }
+
+    @Test fun palmToFistTriggersSingleTapAfterStableStart() {
+        val hints=mutableListOf<String>()
+        val d=detector(hints)
+        arm(d,openPalm())
+        assertEquals(listOf("✋"),hints)
+        assertEquals("Palm_To_Fist",finish(d,pose()))
+        for(t in listOf(900L,1000L,1150L,1300L)) assertNull(d.process(pose(),t))
+    }
+
+    @Test fun fistToPalmTriggersDoubleTapAfterStableStart() {
+        val d=detector()
+        arm(d,pose())
+        assertEquals("Fist_To_Palm",finish(d,openPalm()))
+        for(t in listOf(900L,1030L,1180L,1350L)) assertNull(d.process(openPalm(),t))
+    }
+
+    @Test fun staticPalmAndFistNeverClick() {
+        for(p in listOf(openPalm(),pose())) {
+            val d=detector()
+            for(t in listOf(100L,230L,340L,560L,730L,910L,1200L))
+                assertNull(d.process(p,t))
+        }
+    }
+
+    @Test fun palmMustBeStableBeforeClickTransition() {
+        val d=detector()
+        assertNull(d.process(openPalm(),100L))
+        assertNull(d.process(openPalm(),180L))
+        for(t in listOf(240L,320L,400L,490L)) assertNull(d.process(pose(),t))
+    }
+
+    @Test fun twoFingerPoseNeverCountsAsFullPalm() {
+        val d=detector()
+        arm(d,pose(indexExtended=true,middleExtended=true))
+        for(t in listOf(640L,750L,850L))
+            assertNull(d.process(pose(indexExtended=true,middleExtended=true),t))
+    }
+
+    @Test fun fistIndexFlickStillWorksAndIsNotDoubleTap() {
+        val d=detector()
+        arm(d,pose())
+        assertEquals("Index_Up",finish(d,pose(indexExtended=true)))
+    }
+
+    @Test fun palmToFistThenReverseCanRearmWithoutAnotherRoundTrip() {
+        val d=detector()
+        arm(d,openPalm())
+        assertEquals("Palm_To_Fist",finish(d,pose()))
+        for(t in listOf(900L,1100L,1300L)) assertNull(d.process(pose(),t))
+        // Holding the destination fist ends the last gesture cycle.
+        for(t in listOf(1400L,1520L,1640L,1760L,1880L))
+            assertNull(d.process(pose(),t))
+        assertNull(d.process(openPalm(),1960L))
+        assertNull(d.process(openPalm(),2050L))
+        assertEquals("Fist_To_Palm",d.process(openPalm(),2140L))
     }
 
 }
